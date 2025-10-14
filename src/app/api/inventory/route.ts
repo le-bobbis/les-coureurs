@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { listInventory, addItem, useItem } from "@/lib/inventory";
+import { listInventory, addInventoryItem } from "@/lib/inventory";
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
@@ -11,6 +11,6 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   const body = await req.json();
-  const { data, error } = await addItem(body);
+  const { data, error } = await addInventoryItem(body);
   return NextResponse.json({ data, error });
 }
