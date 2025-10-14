@@ -13,7 +13,7 @@ export async function listInventory(_profileId: string): Promise<{
   error: string | null;
   items: InventoryItem[];
 }> {
-  // Stub: return empty, no error. Replace with real Supabase read later.
+  // Stub: return empty; swap to real Supabase queries later
   return { error: null, items: [] };
 }
 
