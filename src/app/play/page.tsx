@@ -1,11 +1,35 @@
 "use client";
 import { useEffect, useState } from "react";
 
+type TurnLog = { narrative: string };
+
+function getErrMessage(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  if (typeof e === "string") return e;
+  try {
+    return JSON.stringify(e);
+  } catch {
+    return "unknown error";
+  }
+}
+
+async function parseJsonOrText(res: Response) {
+  const ct = res.headers.get("content-type") || "";
+  if (ct.includes("application/json")) {
+    return await res.json();
+  }
+  const txt = await res.text();
+  throw new Error(
+    `Non-JSON response (${res.status} ${res.statusText}). First 120 chars:\n` +
+      txt.slice(0, 120)
+  );
+}
+
 export default function PlayPage() {
-  const [sessionId, setSessionId] = useState("");
-  const [input, setInput] = useState("");
-  const [log, setLog] = useState<Array<{ narrative: string }>>([]);
-  const [busy, setBusy] = useState(false);
+  const [sessionId, setSessionId] = useState<string>("");
+  const [input, setInput] = useState<string>("");
+  const [log, setLog] = useState<TurnLog[]>([]);
+  const [busy, setBusy] = useState<boolean>(false);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
@@ -14,15 +38,17 @@ export default function PlayPage() {
   }, []);
 
   async function createSession() {
-    setErr(null); setBusy(true);
+    setErr(null);
+    setBusy(true);
     try {
       const res = await fetch("/api/session", { method: "POST" });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || "Failed to create session");
-      setSessionId(data.sessionId);
-      history.replaceState(null, "", `?session=${data.sessionId}`); // keep it in URL
-    } catch (e: any) {
-      setErr(e.message || "Error creating session");
+      const data = await parseJsonOrText(res);
+      if (!res.ok) throw new Error((data && data.error) || "Failed to create session");
+      const id: string = data.sessionId;
+      setSessionId(id);
+      history.replaceState(null, "", `?session=${id}`);
+    } catch (e: unknown) {
+      setErr(getErrMessage(e));
     } finally {
       setBusy(false);
     }
@@ -30,19 +56,20 @@ export default function PlayPage() {
 
   async function send() {
     if (!sessionId || !input) return;
-    setErr(null); setBusy(true);
+    setErr(null);
+    setBusy(true);
     try {
       const res = await fetch("/api/turn", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ sessionId, playerInput: input.slice(0, 50) })
+        body: JSON.stringify({ sessionId, playerInput: input.slice(0, 50) }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || "API error");
-      if (data?.narrative) setLog(prev => [...prev, { narrative: data.narrative }]);
+      const data = await parseJsonOrText(res);
+      if (!res.ok) throw new Error((data && data.error) || "API error");
+      if (data?.narrative) setLog((prev) => [...prev, { narrative: data.narrative }]);
       setInput("");
-    } catch (e: any) {
-      setErr(e.message || "Error sending turn");
+    } catch (e: unknown) {
+      setErr(getErrMessage(e));
     } finally {
       setBusy(false);
     }
@@ -57,7 +84,7 @@ export default function PlayPage() {
           className="flex-1 rounded border border-white/20 bg-black/40 p-2"
           placeholder="Session ID (or click Create)"
           value={sessionId}
-          onChange={e => setSessionId(e.target.value)}
+          onChange={(e) => setSessionId(e.target.value)}
         />
         <button
           onClick={createSession}
@@ -68,7 +95,7 @@ export default function PlayPage() {
         </button>
       </div>
 
-      {err && <p className="mb-3 text-red-400">{err}</p>}
+      {err && <p className="mb-3 text-red-400 whitespace-pre-wrap">{err}</p>}
 
       <div className="space-y-3 mb-4">
         {log.map((t, i) => (
@@ -83,10 +110,14 @@ export default function PlayPage() {
           className="flex-1 rounded border border-white/20 bg-black/40 p-2"
           placeholder="Enter action (≤ 50 chars)"
           value={input}
-          onChange={e => setInput(e.target.value)}
+          onChange={(e) => setInput(e.target.value)}
           maxLength={50}
         />
-        <button onClick={send} className="rounded border border-white/20 px-3" disabled={busy || !sessionId}>
+        <button
+          onClick={send}
+          className="rounded border border-white/20 px-3"
+          disabled={busy || !sessionId}
+        >
           Send
         </button>
       </div>

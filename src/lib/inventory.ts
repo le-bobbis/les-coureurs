@@ -13,7 +13,6 @@ export async function listInventory(_profileId: string): Promise<{
   error: string | null;
   items: InventoryItem[];
 }> {
-  // Stub: return empty; swap to real Supabase queries later
   return { error: null, items: [] };
 }
 
@@ -21,6 +20,5 @@ export async function applyItemUse(
   _itemId: string,
   _opts: { consume?: boolean; damage?: boolean }
 ): Promise<{ error: string | null }> {
-  // Stub: pretend success
   return { error: null };
 }
