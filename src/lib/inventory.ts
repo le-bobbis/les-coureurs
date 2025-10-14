@@ -1,5 +1,3 @@
-// TEMP STUB for Phase 6 — replace later with real logic.
-
 export type InventoryItem = {
   id: string;
   name: string;
@@ -8,25 +6,22 @@ export type InventoryItem = {
   status?: string;
 };
 
-/** List inventory for a session/user/etc. */
-export async function listInventory(sessionId?: string): Promise<{
+export async function listInventory(profileId?: string): Promise<{
   error: string | null;
-  items: InventoryItem[];
+  data: InventoryItem[];
 }> {
-  // explicitly reference to avoid "unused var" warnings
-  void sessionId;
-  return { error: null, items: [] };
+  void profileId;
+  return { error: null, data: [] };
 }
 
-/** Add an item (no-op stub) */
 export async function addInventoryItem(item?: Partial<InventoryItem>): Promise<{
   error: string | null;
+  data?: InventoryItem;
 }> {
   void item;
   return { error: null };
 }
 
-/** Apply an item use (no-op stub) */
 export async function applyItemUse(
   itemId: string,
   opts?: { consume?: boolean; damage?: boolean }
