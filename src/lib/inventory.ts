@@ -1,32 +1,26 @@
+// src/lib/inventory.ts
 export type InventoryItem = {
   id: string;
-  name: string;
-  qty?: number;
-  emoji?: string;
-  status?: string;
+  profile_id: string;
+  item_slug: string;
+  name?: string | null;
+  emoji?: string | null;
+  qty: number;
+  status?: string | null;
 };
 
-export async function listInventory(profileId?: string): Promise<{
+export async function listInventory(_profileId: string): Promise<{
   error: string | null;
-  data: InventoryItem[];
+  items: InventoryItem[];
 }> {
-  void profileId;
-  return { error: null, data: [] };
-}
-
-export async function addInventoryItem(item?: Partial<InventoryItem>): Promise<{
-  error: string | null;
-  data?: InventoryItem;
-}> {
-  void item;
-  return { error: null };
+  // Stub: return empty, no error. Replace with real Supabase read later.
+  return { error: null, items: [] };
 }
 
 export async function applyItemUse(
-  itemId: string,
-  opts?: { consume?: boolean; damage?: boolean }
+  _itemId: string,
+  _opts: { consume?: boolean; damage?: boolean }
 ): Promise<{ error: string | null }> {
-  void itemId;
-  void opts;
+  // Stub: pretend success
   return { error: null };
 }
