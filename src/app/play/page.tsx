@@ -1,27 +1,21 @@
 "use client";
 import { useEffect, useState } from "react";
+import DevPanel, { TurnDebug } from "@/components/DevPanel";
 
-type TurnLog = { narrative: string };
+type TurnLog = { narrative: string; engine: { debug: TurnDebug } };
 
 function getErrMessage(e: unknown): string {
   if (e instanceof Error) return e.message;
   if (typeof e === "string") return e;
-  try {
-    return JSON.stringify(e);
-  } catch {
-    return "unknown error";
-  }
+  try { return JSON.stringify(e); } catch { return "unknown error"; }
 }
 
 async function parseJsonOrText(res: Response) {
   const ct = res.headers.get("content-type") || "";
-  if (ct.includes("application/json")) {
-    return await res.json();
-  }
+  if (ct.includes("application/json")) return await res.json();
   const txt = await res.text();
   throw new Error(
-    `Non-JSON response (${res.status} ${res.statusText}). First 120 chars:\n` +
-      txt.slice(0, 120)
+    `Non-JSON response (${res.status} ${res.statusText}). First 120 chars:\n` + txt.slice(0, 120)
   );
 }
 
@@ -38,8 +32,7 @@ export default function PlayPage() {
   }, []);
 
   async function createSession() {
-    setErr(null);
-    setBusy(true);
+    setErr(null); setBusy(true);
     try {
       const res = await fetch("/api/session", { method: "POST" });
       const data = await parseJsonOrText(res);
@@ -49,15 +42,12 @@ export default function PlayPage() {
       history.replaceState(null, "", `?session=${id}`);
     } catch (e: unknown) {
       setErr(getErrMessage(e));
-    } finally {
-      setBusy(false);
-    }
+    } finally { setBusy(false); }
   }
 
   async function send() {
     if (!sessionId || !input) return;
-    setErr(null);
-    setBusy(true);
+    setErr(null); setBusy(true);
     try {
       const res = await fetch("/api/turn", {
         method: "POST",
@@ -66,13 +56,11 @@ export default function PlayPage() {
       });
       const data = await parseJsonOrText(res);
       if (!res.ok) throw new Error((data && data.error) || "API error");
-      if (data?.narrative) setLog((prev) => [...prev, { narrative: data.narrative }]);
+      if (data?.narrative) setLog((prev) => [...prev, { narrative: data.narrative, engine: data.engine }]);
       setInput("");
     } catch (e: unknown) {
       setErr(getErrMessage(e));
-    } finally {
-      setBusy(false);
-    }
+    } finally { setBusy(false); }
   }
 
   return (
@@ -86,11 +74,7 @@ export default function PlayPage() {
           value={sessionId}
           onChange={(e) => setSessionId(e.target.value)}
         />
-        <button
-          onClick={createSession}
-          className="rounded border border-white/20 px-3"
-          disabled={busy}
-        >
+        <button onClick={createSession} className="rounded border border-white/20 px-3" disabled={busy}>
           {busy ? "…" : "Create"}
         </button>
       </div>
@@ -99,8 +83,9 @@ export default function PlayPage() {
 
       <div className="space-y-3 mb-4">
         {log.map((t, i) => (
-          <div key={i} className="rounded border border-white/20 p-3 whitespace-pre-wrap">
-            {t.narrative}
+          <div key={i} className="rounded border border-white/20 p-3 space-y-2">
+            <div className="whitespace-pre-wrap">{t.narrative}</div>
+            {t.engine?.debug ? <DevPanel debug={t.engine.debug} /> : null}
           </div>
         ))}
       </div>
@@ -113,11 +98,7 @@ export default function PlayPage() {
           onChange={(e) => setInput(e.target.value)}
           maxLength={50}
         />
-        <button
-          onClick={send}
-          className="rounded border border-white/20 px-3"
-          disabled={busy || !sessionId}
-        >
+        <button onClick={send} className="rounded border border-white/20 px-3" disabled={busy || !sessionId}>
           Send
         </button>
       </div>
