@@ -1,4 +1,3 @@
-// src/lib/inventory.ts
 export type InventoryItem = {
   id: string;
   profile_id: string;
