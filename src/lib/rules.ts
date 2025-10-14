@@ -1,4 +1,10 @@
-import type { EngineInput, EngineOutput, CheckResult, Stats } from "@/types";
+import type {
+  EngineInput,
+  EngineOutput,
+  CheckResult,
+  Stats,
+  GameState,
+} from "@/types";
 
 /** FNV-1a hash to int32 */
 function hashToInt(s: string) {
@@ -10,7 +16,7 @@ function hashToInt(s: string) {
 /** Seeded PRNG (LCG) */
 function prng(seed: number) {
   let x = seed >>> 0;
-  return () => (x = (1664525 * x + 1013904223) >>> 0, x / 2 ** 32);
+  return () => ((x = (1664525 * x + 1013904223) >>> 0), x / 2 ** 32);
 }
 
 function d20(rand: () => number) {
@@ -18,7 +24,9 @@ function d20(rand: () => number) {
 }
 
 /** Simple intent classifier (literal, minimal) */
-export function classify(input: string): "climb"|"sneak"|"shoot"|"melee"|"search"|"talk"|"intimidate"|"run"|"use"|"other" {
+export function classify(
+  input: string
+): "climb" | "sneak" | "shoot" | "melee" | "search" | "talk" | "intimidate" | "run" | "use" | "other" {
   const s = input.toLowerCase();
   if (/\bclimb|scale|ascend\b/.test(s)) return "climb";
   if (/\bsneak|creep|quiet\b/.test(s)) return "sneak";
@@ -47,7 +55,7 @@ function statFor(intent: ReturnType<typeof classify>): keyof Stats {
 }
 
 /** Situational modifier from crude flags; keep small and predictable */
-function situationalMod(state: any, intent: string): number {
+function situationalMod(state: GameState, intent: string): number {
   let mod = 0;
   if (state?.env?.light === "dark") mod -= 2;
   if (state?.env?.light === "dim") mod -= 1;
@@ -61,11 +69,11 @@ function situationalMod(state: any, intent: string): number {
 /** DC table by intent; tweak as you balance */
 function baseDC(intent: string): number {
   switch (intent) {
-    case "climb": return 12;       // risky
+    case "climb": return 12;
     case "sneak": return 12;
     case "shoot": return 12;
     case "melee": return 12;
-    case "search": return 10;      // routine
+    case "search": return 10;
     case "talk": return 12;
     case "intimidate": return 12;
     case "run": return 10;
@@ -75,7 +83,7 @@ function baseDC(intent: string): number {
 
 /** Apply category; Luck gives a tie edge */
 function categorize(total: number, dc: number, nat: number, LCK: number): CheckResult["result"] {
-  const t = (total === dc && LCK >= 6) ? total + 1 : total;
+  const t = total === dc && LCK >= 6 ? total + 1 : total;
   if (nat === 20 || t >= dc + 5) return "critical";
   if (t >= dc) return "success";
   if (t >= dc - 2) return "mixed";
@@ -83,10 +91,15 @@ function categorize(total: number, dc: number, nat: number, LCK: number): CheckR
 }
 
 /** Very simple item bonus inference (expand later) */
-function inferItemBonus(state: any, input: string, intent: string): { bonus: number; notes: string[] } {
+function inferItemBonus(
+  state: GameState,
+  input: string,
+  intent: string
+): { bonus: number; notes: string[] } {
   const s = input.toLowerCase();
-  const inv: Array<{name:string; emoji?:string}> = state?.inventory ?? [];
-  let bonus = 0; const notes: string[] = [];
+  const inv = state?.inventory ?? [];
+  let bonus = 0;
+  const notes: string[] = [];
 
   const has = (n: string) => inv.some(it => it.name?.toLowerCase() === n || it.emoji === n);
   if (intent === "climb" && (has("rope") || s.includes("rope"))) { bonus += 2; notes.push("Rope used; +2"); }
@@ -104,7 +117,7 @@ export function resolveTurn(input: EngineInput): EngineOutput {
   const intent = classify(input.playerInput);
   const primary = statFor(intent);
   const situ = situationalMod(input.state, intent);
-  const dc = baseDC(intent) + Math.max(0, -(situ));  // slightly harder in bad conditions
+  const dc = baseDC(intent) + Math.max(0, -situ);  // slightly harder in bad conditions
 
   const { bonus: itemBonus, notes: itemNotes } = inferItemBonus(input.state, input.playerInput, intent);
 
@@ -114,7 +127,6 @@ export function resolveTurn(input: EngineInput): EngineOutput {
 
   const result = categorize(total, dc, nat, input.stats.LCK ?? 5);
 
-  // world effects (example defaults; expand per feature)
   const worldDelta: EngineOutput["worldDelta"] = { injury: null, itemNotes, flags: [], inventoryChanges: [] };
   if (result === "mixed") worldDelta.injury = "minor";
   if (result === "fail" && (intent === "melee" || intent === "climb")) worldDelta.flags!.push("death_gate_candidate");
@@ -135,7 +147,9 @@ export function resolveTurn(input: EngineInput): EngineOutput {
 
   return {
     outcomeSummary,
-    checksBrief: [`${check.name} ${result.toUpperCase()} (d20+${primary}${itemBonus?"+item":""}${situ?"+situ":""} vs DC${dc})`],
+    checksBrief: [
+      `${check.name} ${result.toUpperCase()} (d20+${primary}${itemBonus ? "+item" : ""}${situ ? "+situ" : ""} vs DC${dc})`,
+    ],
     worldDelta,
     actionsRemaining: Math.max(0, input.actionsRemaining - 1),
     debug: {
