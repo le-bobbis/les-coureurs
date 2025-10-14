@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { listInventory, addItem, useItem } from "lib/inventory";
+import { listInventory, addItem, useItem } from "@/lib/inventory";
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
