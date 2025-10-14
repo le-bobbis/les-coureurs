@@ -1,4 +1,39 @@
-import { supabaseAdmin } from "lib/db";
+// TEMP STUB for Phase 6 — just to make builds pass during Phase 3.
+// Replace with real logic in Phase 6.
+
+export type InventoryItem = {
+  id: string;
+  name: string;
+  qty?: number;
+  emoji?: string;
+  status?: string;
+};
+
+/** List inventory for a session/user/etc. */
+export async function listInventory(..._args: any[]): Promise<{
+  error: string | null;
+  items: InventoryItem[];
+}> {
+  return { error: null, items: [] }; // empty list for now
+}
+
+/** Add an item (no-op stub) */
+export async function addItem(..._args: any[]): Promise<{
+  error: string | null;
+}> {
+  return { error: null };
+}
+
+/** Use an item (no-op stub) */
+export async function useItem(..._args: any[]): Promise<{
+  error: string | null;
+}> {
+  return { error: null };
+}
+
+
+
+/*import { supabaseAdmin } from "lib/db";
 
 export async function listInventory(profileId: string) {
   return supabaseAdmin
@@ -75,4 +110,6 @@ export async function useItem(itemId: string, options: { consume?: boolean; dama
   }
 
   return { data: item, error: null };
-}
+}*/
+
+

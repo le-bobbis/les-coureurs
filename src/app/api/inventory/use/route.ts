@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { useItem } from "lib/inventory";
+import { useItem } from "@/lib/inventory";
 
 export async function POST(req: Request) {
   const { itemId, consume, damage } = await req.json();
