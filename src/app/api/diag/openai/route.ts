@@ -8,9 +8,8 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 export async function GET() {
   try {
-    // ask for something unique each call
-    const prompt = `Return a random UUID v4 and today's UTC timestamp. 
-    Output on one line: <uuid> | <iso-utc>. No extra words.`;
+    const prompt = `Return a random UUID v4 and today's UTC timestamp.
+Output on one line: <uuid> | <iso-utc>. No extra words.`;
 
     const r = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -27,9 +26,16 @@ export async function GET() {
       ok: true,
       model: r.model || "unknown",
       text,
-      usage: r.usage || null,
+      usage: r.usage ?? null,
     });
-  } catch (e: any) {
-    return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 });
+  } catch (e: unknown) {
+    // No 'any' — safe, explicit typing
+    const message = e instanceof Error ? e.message : String(e);
+    const status =
+      typeof (e as { status?: number })?.status === "number"
+        ? (e as { status?: number }).status
+        : 500;
+
+    return NextResponse.json({ ok: false, error: message }, { status });
   }
 }
