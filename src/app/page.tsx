@@ -2,92 +2,122 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import DevSeedButton from "@/components/DevSeedButton";
 
 type Mission = {
   id: string;
   date: string;
   slot: number;
   title: string;
-  brief: string;
-  objective?: string | null;
+  prompt: string | null;
+  objective: string | null;
+  mission_type: string | null;
+  factions: string[];
+  displayBrief: string | null;
 };
 
-export default function Home() {
+export default function HomePage() {
   const router = useRouter();
-  const [missions, setMissions] = useState<Mission[] | null>(null);
+  const [missions, setMissions] = useState<Mission[]>([]);
+  const [fetchErr, setFetchErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+
+  async function loadMissions() {
+    try {
+      setFetchErr(null);
+      const res = await fetch("/api/missions", { cache: "no-store" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Failed to load missions");
+      setMissions(json as Mission[]);
+    } catch (e: any) {
+      setFetchErr(e.message || "Failed to load missions");
+      setMissions([]);
+    }
+  }
 
   useEffect(() => {
-    (async () => {
-      const res = await fetch("/api/missions", { cache: "no-store" });
-      const data = await res.json();
-      if (!data?.ok) {
-        setErr(data?.error || "Failed to load missions");
-        setMissions([]);
-        return;
-      }
-      setMissions(data.missions || []);
-    })();
+    loadMissions();
   }, []);
 
   async function startSession(missionId: string) {
-    setLoading(true);
     try {
+      setLoading(true);
       const res = await fetch("/api/session", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ missionId }),
       });
-      const data = await res.json();
-      if (!data?.ok) {
-        alert(data?.error || "Failed to create session");
-        return;
+      const json = await res.json();
+      if (!res.ok || !json?.sessionId) {
+        throw new Error(json?.error || "Could not start session");
       }
-      router.push(`/play?session=${data.sessionId}`);
+      router.push(`/play?session=${encodeURIComponent(json.sessionId)}`);
+    } catch (e: any) {
+      alert(e.message || "Could not start session");
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <main className="mx-auto max-w-xl p-4 text-white">
-      <h1 className="text-2xl font-bold mb-3">Les Coureurs — Daily Missions</h1>
+    <main className="mx-auto max-w-3xl p-4 text-white">
+      <h1 className="mb-3 text-2xl font-bold">Les Coureurs — Daily Missions</h1>
 
-      {err ? <div className="text-red-400 mb-3">{err}</div> : null}
+      {process.env.NODE_ENV !== "production" && <DevSeedButton />}
 
-      {missions === null ? (
-        <div className="opacity-70">Loading…</div>
-      ) : missions.length === 0 ? (
-        <div className="opacity-70">No missions seeded for today.</div>
-      ) : (
-        <div className="grid gap-3">
-          {missions.map((m) => (
-            <div key={m.id} className="rounded border border-white/20 p-3 bg-black/30">
-              <div className="flex items-center justify-between mb-1">
-                <h2 className="font-semibold">{m.title}</h2>
-                <span className="text-xs opacity-70">Slot {m.slot}</span>
+      {fetchErr && <p className="mb-3 text-sm text-red-300">Error: {fetchErr}</p>}
+
+      <div className="grid gap-4">
+        {missions.length ? (
+          missions.map((m) => (
+            <article key={m.id} className="rounded-lg border border-white/15 p-4">
+              <header className="mb-2 flex items-center justify-between gap-2">
+                <h2 className="text-lg font-medium">
+                  {m.title} <span className="opacity-60">• Slot {m.slot}</span>
+                </h2>
+                {m.mission_type && (
+                  <span className="rounded-full border border-white/25 px-2 py-0.5 text-xs opacity-90">
+                    {m.mission_type}
+                  </span>
+                )}
+              </header>
+
+              {/* Faction chips */}
+              {m.factions?.length > 0 && (
+                <div className="mb-2 flex flex-wrap gap-2">
+                  {m.factions.map((f) => (
+                    <span key={f} className="rounded-md border border-white/15 px-2 py-0.5 text-xs opacity-80">
+                      {f}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {/* Long paragraph (prompt) FIRST */}
+              {m.prompt && <p className="mt-1 text-sm">{m.prompt}</p>}
+
+              {/* Objective SECOND */}
+              {m.objective && (
+                <p className="mt-2 text-sm opacity-80">Objective: {m.objective}</p>
+              )}
+
+              <div className="mt-3">
+                <button
+                  onClick={() => startSession(m.id)}
+                  disabled={loading}
+                  className="rounded-md border border-white/30 px-3 py-1 text-sm hover:bg-white/10 disabled:opacity-50"
+                >
+                  Start
+                </button>
               </div>
-
-              <p className="opacity-90 mb-2">{m.brief}</p>
-
-              {m.objective ? (
-                <p className="text-sm opacity-80 mb-2">
-                  <span className="opacity-70">Objective:</span> {m.objective}
-                </p>
-              ) : null}
-
-              <button
-                onClick={() => startSession(m.id)}
-                disabled={loading}
-                className="rounded border border-white/20 px-3 py-1 disabled:opacity-50"
-              >
-                {loading ? "Starting…" : "Start"}
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
+            </article>
+          ))
+        ) : (
+          <p className="opacity-70">
+            No missions yet. {process.env.NODE_ENV !== "production" ? "Click “Seed today’s missions.”" : "Please check back later."}
+          </p>
+        )}
+      </div>
     </main>
   );
 }
