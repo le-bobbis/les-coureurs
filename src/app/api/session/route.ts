@@ -1,72 +1,83 @@
+// src/app/api/session/route.ts
+export const runtime = "nodejs";
+
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/db";
+import { randomUUID } from "crypto";
 
-/**
- * GET /api/session
- * Simple ping to verify the route and JSON response.
- */
-export async function GET() {
-  return NextResponse.json({ ok: true, hint: "POST here to create a session" });
-}
-
-/**
- * POST /api/session
- * Creates a session row using an existing mission (required by your schema).
- */
-export async function POST() {
+export async function POST(req: Request) {
   try {
-    // Accept either service-role env var name; also validate URL is present.
-    const urlOk = !!process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const serviceOk =
-      !!process.env.SUPABASE_SERVICE_ROLE_KEY || !!process.env.SUPABASE_SERVICE_ROLE;
-
-    if (!urlOk || !serviceOk) {
-      return NextResponse.json(
-        {
-          error:
-            "Supabase env vars missing. Need NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY (or SUPABASE_SERVICE_ROLE).",
-        },
-        { status: 500 }
-      );
+    const body = await req.json().catch(() => ({}));
+    const missionId: string | undefined = body?.missionId;
+    if (!missionId) {
+      return NextResponse.json({ error: "missionId required" }, { status: 400 });
     }
 
-    // Your schema requires mission_id (NOT NULL). Grab any existing mission.
+    // Load mission (snapshot the important fields)
     const { data: mission, error: mErr } = await supabaseAdmin
       .from("missions")
-      .select("id")
-      .limit(1)
+      .select("id, title, brief, objective, mission_prompt, opening, date, slot")
+      .eq("id", missionId)
       .single();
-
     if (mErr || !mission) {
-      return NextResponse.json(
-        { error: "No missions found. Seed at least one row in 'missions'." },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: mErr?.message || "mission not found" }, { status: 404 });
     }
 
-    // sessions.user_id is NOT NULL. Use a placeholder until Auth (Phase 7).
-    const placeholderUserId = "00000000-0000-0000-0000-000000000000";
+    const userId = randomUUID(); // temp until Phase 7 auth
 
-    const { data, error } = await supabaseAdmin
+    // Create session with a mission snapshot in state
+    const missionSnapshot = {
+      id: mission.id,
+      title: mission.title,
+      brief: mission.brief,
+      objective: mission.objective,
+      prompt: mission.mission_prompt,
+      date: mission.date,
+      slot: mission.slot,
+    };
+
+    const { data: created, error: sErr } = await supabaseAdmin
       .from("sessions")
-      .insert([
-        {
-          user_id: placeholderUserId,
-          mission_id: mission.id,
-          state: {}, // actions_remaining defaults to 10 per your schema
-        },
-      ])
-      .select("id")
+      .insert([{
+        mission_id: mission.id,
+        user_id: userId,
+        actions_remaining: 10,
+        state: { mission: missionSnapshot },
+      }])
+      .select("id, actions_remaining")
       .single();
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+    if (sErr || !created) {
+      return NextResponse.json({ error: sErr?.message || "session create failed" }, { status: 500 });
     }
 
-    return NextResponse.json({ sessionId: data.id });
+    const sessionId = created.id;
+
+    // Optional: Turn 0 intro (does NOT consume action)
+    if (mission.opening && mission.opening.trim().length > 0) {
+      await supabaseAdmin.from("turns").insert([{
+        session_id: sessionId,
+        idx: 0,
+        player_input: "(mission start)",
+        narrative:
+`${mission.opening.trim()}
+
+---
+**Summary**
+- Mission: ${mission.title}
+- Objective: ${mission.objective ?? "—"}
+- Scene set. Await your first action.
+- **Actions remaining:** ${created.actions_remaining}`,
+        summary: JSON.stringify([
+          `Mission: ${mission.title}`,
+          `Objective: ${mission.objective ?? "—"}`,
+          "Scene set",
+        ]),
+        debug: { intro: true, mission: missionSnapshot },
+      }]);
+    }
+
+    return NextResponse.json({ ok: true, sessionId });
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : "unknown error";
-    console.error("Unhandled /api/session error:", e);
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });
   }
 }

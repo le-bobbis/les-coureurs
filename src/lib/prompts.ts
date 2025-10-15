@@ -1,64 +1,61 @@
 // src/lib/prompts.ts
-export const CANON_CORE = `
-Core canon:
-- Alternate 19th-century France; "La Brume" miasma reanimates dead: "Revenants."
-- Fractured enclaves; travel is lethal and slow.
-- Tech: steam/clockwork/early electrics; flintlocks/revolvers/rifles; horse/foot; rare steam carriages.
-- Revenants react to light/vibration; stillness and silence help.
-- Tone: present tense, spare, grounded; one beat; ≤150 words; no options/advice.
-- Summary: 3 bullets; facts must appear in narrative; include "Actions remaining".
-- Factions: Prussian League (cold blue, brass); The Blessed (bells on revenants); English Crown (theocratic).
-- Revenants and bandits are deadly in equal measure.
-- Regions: Crater Lands; Heartland; Western Marches; Frontier toward Prussia.
-`.trim();
+import type { EngineOutput } from "@/types";
 
 export const SYSTEM_GM = `
 Role: Game Master for LES COUREURS — alternate 19th-century Europe ravaged by undeath.
-Voice: Present tense, spare, 150 words max.
-Purpose: Describe the immediate consequence of the player's action. One meaningful beat. No options or advice.
-${CANON_CORE}
-Format: Narrative + exactly three summary bullets + actions remaining.
-Rules: No invented player intent. No new facts in summary. Summary facts must appear in the narrative.
+Voice: Present tense, spare, ≤150 words.
+Purpose: Describe the world and immediate consequence of the player's action without offering choices or guidance.
+Format: Narrative section + exactly three summary bullets + actions remaining.
+Rules:
+- No invented player intent; execute exactly what the player said.
+- The body must communicate a definite result (success, mixed, fail, or death) matching the engine outcome.
+- Summary contains only facts already stated in the body (no new info).
+- Do NOT list options or guidance.
+- Keep proper nouns consistent and grounded; avoid purple prose.
 `.trim();
 
-export type PromptParts = {
+type BuildArgs = {
   playerInput: string;
-  outcomeSummary: string;
-  actionsRemaining: number;
-  recentHistory: string[];     // last 1–2 turn summaries
-  loreHints?: string[];        // small list of canon hints selected per-turn
+  engine: EngineOutput;
+  mission: {
+    title: string;
+    objective?: string | null;
+    /** Short, mission-specific context seed. */
+    prompt?: string | null;
+  };
+  /** Last few bullets from previous turns (already trimmed) */
+  historySummary: string[];
 };
 
-export function buildUserPrompt(p: PromptParts) {
-  const history = p.recentHistory.length
-    ? `Recent history:\n- ${p.recentHistory.join("\n- ")}\n\n`
-    : "";
+export function buildUserPrompt(args: BuildArgs): string {
+  const { playerInput, engine, mission, historySummary } = args;
 
-  const canon = p.loreHints?.length
-    ? `Canon notes (for consistency; do not invent beyond these):\n- ${p.loreHints.join("\n- ")}\n\n`
-    : "";
+  const historyBlock =
+    historySummary?.length
+      ? `Recent summary (most recent first):
+- ${historySummary.join("\n- ")}`
+      : `Recent summary: (none)`;
 
-  return `
-You are writing the next beat of a mission in <=150 words.
+  // Strongly foreground the mission; de-emphasize broad lore.
+  const missionBlock = [
+    `Mission: ${mission.title}`,
+    mission.objective ? `Objective: ${mission.objective}` : null,
+    mission.prompt ? `Mission prompt: ${mission.prompt}` : null,
+  ].filter(Boolean).join("\n");
 
-${canon}${history}Player input: "${p.playerInput}"
-Engine outcome summary: ${p.outcomeSummary}
-Actions remaining after this reply: ${p.actionsRemaining}
+  // The engine outcome is the arbiter of result; the model narrates around it.
+  const outcomeLine = `Outcome (from engine): ${engine.outcomeSummary}`;
+  const checksLine = engine.checksBrief?.length ? `Check: ${engine.checksBrief[0]}` : "";
 
-Write:
-1) A single narrative paragraph (<=150 words). Present tense. No options or advice. No invented intent beyond the literal action.
-2) Then exactly this block:
-
----
-**Summary**
-- Fact 1 (must be explicitly stated in narrative)
-- Fact 2 (must be explicitly stated in narrative)
-- Fact 3 (must be explicitly stated in narrative)
-- **Actions remaining:** ${p.actionsRemaining}
-
-Hard rules:
-- 150 words max in the narrative (do not exceed).
-- Summary facts must appear verbatim in the narrative (no new info).
-- Do not add extra bullets or headings.
-`.trim();
+  return [
+    missionBlock,
+    historyBlock,
+    `Player action (authoritative, ≤50 chars): "${playerInput}"`,
+    outcomeLine,
+    checksLine,
+    `Actions remaining: ${engine.actionsRemaining}`,
+    "",
+    `Write a single beat of narrative (≤150 words), present tense, grounded and specific to THIS mission.`,
+    `Then output exactly three bullets under a '---\\n**Summary**' header, each a fact already stated in the body, followed by "**Actions remaining:** X".`,
+  ].filter(Boolean).join("\n\n");
 }
