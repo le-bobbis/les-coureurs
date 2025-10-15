@@ -1,10 +1,33 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
+import type { TurnDebug } from "@/types";
 
 type TurnLog = {
   role: "user" | "gm";
   text: string;
-  debug?: any;
+  debug?: TurnDebug;
+};
+
+type ApiSessionResponse = {
+  ok: boolean;
+  error?: string;
+  session?: { actions_remaining?: number | null } | null;
+  turns?: Array<{
+    player_input: string | null;
+    narrative: string;
+    debug: TurnDebug | null;
+    idx: number;
+  }>;
+};
+
+type ApiTurnResponse = {
+  ok: boolean;
+  error?: string;
+  narrative?: string;
+  engine?: {
+    actionsRemaining?: number;
+    debug?: TurnDebug;
+  };
 };
 
 export default function PlayPage() {
@@ -29,32 +52,26 @@ export default function PlayPage() {
       setError(null);
       try {
         const res = await fetch(`/api/session/${sessionId}`, { cache: "no-store" });
-        const data = await res.json();
+        const data: ApiSessionResponse = await res.json();
         if (!data?.ok) {
           setError(data?.error || "Failed to load session");
           return;
         }
         setActions(data.session?.actions_remaining ?? null);
 
-        const turns = (data.turns ?? []) as Array<{
-          player_input: string;
-          narrative: string;
-          debug: any;
-          idx: number;
-        }>;
-
+        const turns = data.turns ?? [];
         const seeded: TurnLog[] = [];
         for (const t of turns) {
-          // show Turn 0 (opening) with only GM text (player_input is "(mission start)")
           if (t.idx === 0) {
-            seeded.push({ role: "gm", text: t.narrative, debug: t.debug });
+            // opening narrative only
+            seeded.push({ role: "gm", text: t.narrative, debug: t.debug ?? undefined });
           } else {
             if (t.player_input) seeded.push({ role: "user", text: t.player_input });
-            seeded.push({ role: "gm", text: t.narrative, debug: t.debug });
+            seeded.push({ role: "gm", text: t.narrative, debug: t.debug ?? undefined });
           }
         }
         setLog(seeded);
-      } catch (e) {
+      } catch (e: unknown) {
         setError(e instanceof Error ? e.message : String(e));
       }
     })();
@@ -69,7 +86,7 @@ export default function PlayPage() {
     const action = input.slice(0, 50);
     setInput("");
 
-    // echo the user action immediately so the UI never looks dead
+    // echo user action immediately
     setLog((prev) => [...prev, { role: "user", text: action }]);
     setLoading(true);
 
@@ -79,25 +96,24 @@ export default function PlayPage() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ sessionId, playerInput: action }),
       });
-      const data = await res.json().catch(() => ({} as any));
+      const data: ApiTurnResponse = await res.json().catch(() => ({ ok: false, error: "Bad JSON" }));
 
-      if (!res.ok || !data?.ok) {
+      if (!res.ok || !data.ok) {
         const msg = data?.error || `HTTP ${res.status}`;
         setError(msg);
-        // visually tag the failure in the log
         setLog((prev) => [...prev, { role: "gm", text: `⛔ ${msg}` }]);
         return;
       }
 
-      if (data?.narrative) {
-        setLog((prev) => [...prev, { role: "gm", text: data.narrative, debug: data.engine?.debug }]);
-      } else {
-        setLog((prev) => [...prev, { role: "gm", text: "⚠ No narrative returned" }]);
-      }
-      if (typeof data?.engine?.actionsRemaining === "number") {
+      setLog((prev) => [
+        ...prev,
+        { role: "gm", text: data.narrative ?? "⚠ No narrative returned", debug: data.engine?.debug },
+      ]);
+
+      if (typeof data.engine?.actionsRemaining === "number") {
         setActions(data.engine.actionsRemaining);
       }
-    } catch (e) {
+    } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(msg);
       setLog((prev) => [...prev, { role: "gm", text: `⛔ ${msg}` }]);

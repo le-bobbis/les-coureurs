@@ -1,10 +1,5 @@
-import type {
-  EngineInput,
-  EngineOutput,
-  CheckResult,
-  Stats,
-  GameState,
-} from "@/types";
+// src/lib/rules.ts
+import type { EngineInput, EngineOutput, CheckResult, Stats, GameState } from "@/types";
 
 /** FNV-1a hash to int32 */
 function hashToInt(s: string) {
@@ -24,9 +19,7 @@ function d20(rand: () => number) {
 }
 
 /** Simple intent classifier (literal, minimal) */
-export function classify(
-  input: string
-): "climb" | "sneak" | "shoot" | "melee" | "search" | "talk" | "intimidate" | "run" | "use" | "other" {
+export function classify(input: string): "climb" | "sneak" | "shoot" | "melee" | "search" | "talk" | "intimidate" | "run" | "use" | "other" {
   const s = input.toLowerCase();
   if (/\bclimb|scale|ascend\b/.test(s)) return "climb";
   if (/\bsneak|creep|quiet\b/.test(s)) return "sneak";
@@ -69,11 +62,11 @@ function situationalMod(state: GameState, intent: string): number {
 /** DC table by intent; tweak as you balance */
 function baseDC(intent: string): number {
   switch (intent) {
-    case "climb": return 12;
+    case "climb": return 12; // risky
     case "sneak": return 12;
     case "shoot": return 12;
     case "melee": return 12;
-    case "search": return 10;
+    case "search": return 10; // routine
     case "talk": return 12;
     case "intimidate": return 12;
     case "run": return 10;
@@ -91,15 +84,10 @@ function categorize(total: number, dc: number, nat: number, LCK: number): CheckR
 }
 
 /** Very simple item bonus inference (expand later) */
-function inferItemBonus(
-  state: GameState,
-  input: string,
-  intent: string
-): { bonus: number; notes: string[] } {
+function inferItemBonus(state: GameState, input: string, intent: string): { bonus: number; notes: string[] } {
   const s = input.toLowerCase();
   const inv = state?.inventory ?? [];
-  let bonus = 0;
-  const notes: string[] = [];
+  let bonus = 0; const notes: string[] = [];
 
   const has = (n: string) => inv.some(it => it.name?.toLowerCase() === n || it.emoji === n);
   if (intent === "climb" && (has("rope") || s.includes("rope"))) { bonus += 2; notes.push("Rope used; +2"); }
@@ -117,7 +105,7 @@ export function resolveTurn(input: EngineInput): EngineOutput {
   const intent = classify(input.playerInput);
   const primary = statFor(intent);
   const situ = situationalMod(input.state, intent);
-  const dc = baseDC(intent) + Math.max(0, -situ);  // slightly harder in bad conditions
+  const dc = baseDC(intent) + Math.max(0, -situ); // slightly harder in bad conditions
 
   const { bonus: itemBonus, notes: itemNotes } = inferItemBonus(input.state, input.playerInput, intent);
 
@@ -127,6 +115,7 @@ export function resolveTurn(input: EngineInput): EngineOutput {
 
   const result = categorize(total, dc, nat, input.stats.LCK ?? 5);
 
+  // world effects (example defaults; expand per feature)
   const worldDelta: EngineOutput["worldDelta"] = { injury: null, itemNotes, flags: [], inventoryChanges: [] };
   if (result === "mixed") worldDelta.injury = "minor";
   if (result === "fail" && (intent === "melee" || intent === "climb")) worldDelta.flags!.push("death_gate_candidate");
@@ -147,9 +136,7 @@ export function resolveTurn(input: EngineInput): EngineOutput {
 
   return {
     outcomeSummary,
-    checksBrief: [
-      `${check.name} ${result.toUpperCase()} (d20+${primary}${itemBonus ? "+item" : ""}${situ ? "+situ" : ""} vs DC${dc})`,
-    ],
+    checksBrief: [`${check.name} ${result.toUpperCase()} (d20+${primary}${itemBonus?"+item":""}${situ?"+situ":""} vs DC${dc})`],
     worldDelta,
     actionsRemaining: Math.max(0, input.actionsRemaining - 1),
     debug: {

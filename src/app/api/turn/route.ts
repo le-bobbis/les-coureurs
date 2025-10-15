@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/db";
 import { resolveTurn } from "@/lib/rules";
 import { SYSTEM_GM, buildUserPrompt } from "@/lib/prompts";
+import type { EngineOutput, GameState, Stats } from "@/types";
 import OpenAI from "openai";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
@@ -12,6 +13,19 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 function jsonError(message: string, status = 500) {
   return NextResponse.json({ ok: false, error: message }, { status });
 }
+
+type SafeJsonOk = { ok: true; data: { sessionId?: string; playerInput?: string } };
+type SafeJsonErr = { ok: false; error: string };
+
+type SessionRow = {
+  id: string;
+  state: unknown | null;
+  actions_remaining: number | null;
+  // optional: stats if you have that column later; fallback used otherwise
+  stats?: Stats;
+};
+
+type TurnSummaryRow = { summary: unknown };
 
 export async function POST(req: Request) {
   try {
@@ -29,10 +43,10 @@ export async function POST(req: Request) {
       .from("sessions")
       .select("*")
       .eq("id", sessionId)
-      .single();
+      .single<SessionRow>();
     if (sErr || !session) return jsonError(sErr?.message || "session not found", 404);
 
-    // 2) Compute next turn index
+    // 2) Next turn index (count existing)
     const { count, error: cErr } = await supabaseAdmin
       .from("turns")
       .select("*", { count: "exact", head: true })
@@ -40,21 +54,21 @@ export async function POST(req: Request) {
     if (cErr) return jsonError(cErr.message);
     const turnIndex = count ?? 0;
 
-    // 3) Gather inputs
-    const stats =
-      session.stats ??
-      { STR: 5, PER: 5, PRC: 5, VIT: 5, INT: 5, CHA: 5, MEN: 5, RFX: 5, LCK: 5 };
+    // 3) Gather inputs (typed)
+    const stats: Stats =
+      session.stats ?? { STR: 5, PER: 5, PRC: 5, VIT: 5, INT: 5, CHA: 5, MEN: 5, RFX: 5, LCK: 5 };
 
-    const state = session.state ?? {};
-    const missionCtx = state?.mission ?? {
-      title: "Unknown",
-      objective: "",
-      mission_prompt: "",
+    const state: GameState = toGameState(session.state);
+    const missionCtx = {
+      title: state?.mission?.title ?? "Unknown",
+      objective: state?.mission?.objective ?? "",
+      mission_prompt: state?.mission?.mission_prompt ?? "",
     };
-    const actionsRemaining = session.actions_remaining ?? 10;
+
+    const actionsRemaining = (session.actions_remaining ?? 10) as number;
 
     // 4) Rules resolve
-    const engine = resolveTurn({
+    const engine: EngineOutput = resolveTurn({
       sessionId,
       turnIndex,
       playerInput,
@@ -70,23 +84,25 @@ export async function POST(req: Request) {
       .eq("session_id", sessionId)
       .order("idx", { ascending: false })
       .limit(2);
+
     if (hErr) console.error("[turn] history load failed:", hErr);
 
-    const historySummary: string[] = (last2 ?? [])
-      .flatMap((t: any) => (Array.isArray(t.summary) ? t.summary : []))
+    const historySummary: string[] = ((last2 ?? []) as TurnSummaryRow[])
+      .flatMap((t) => (Array.isArray(t.summary) ? (t.summary as unknown[]) : []))
+      .map((v) => (typeof v === "string" ? v : JSON.stringify(v)))
       .slice(0, 6);
 
     // 6) LLM call with robust fallback
     let narrative: string;
     try {
-      // Map mission.mission_prompt (DB/state) → mission.prompt (prompt builder type)
       const userPrompt = buildUserPrompt({
         playerInput,
         engine,
         mission: {
-          title: missionCtx.title ?? "Unknown",
-          objective: missionCtx.objective ?? "",
-          prompt: missionCtx.mission_prompt ?? "",
+          title: missionCtx.title,
+          objective: missionCtx.objective,
+          // map DB's mission_prompt to builder's `prompt`
+          prompt: missionCtx.mission_prompt,
         },
         historySummary,
       });
@@ -103,8 +119,9 @@ export async function POST(req: Request) {
       narrative =
         resp.choices?.[0]?.message?.content?.toString().trim() ||
         fallbackText(playerInput, engine.outcomeSummary, engine.actionsRemaining, engine.worldDelta.injury);
-    } catch (llmErr: any) {
-      console.error("[turn] LLM error:", llmErr?.message || llmErr);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("[turn] LLM error:", msg);
       narrative = fallbackText(
         playerInput,
         engine.outcomeSummary,
@@ -143,21 +160,56 @@ export async function POST(req: Request) {
     }
 
     return NextResponse.json({ ok: true, turnIndex, narrative, engine });
-  } catch (e: any) {
-    console.error("[turn] unhandled error:", e?.stack || e?.message || e);
-    return jsonError(e?.message || "Internal error");
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[turn] unhandled error:", msg);
+    return jsonError(msg);
   }
 }
 
-async function safeJson(
-  req: Request
-): Promise<{ ok: true; data: any } | { ok: false; error: string }> {
+async function safeJson(req: Request): Promise<SafeJsonOk | SafeJsonErr> {
   try {
     const data = await req.json();
-    return { ok: true, data };
+    if (!data || typeof data !== "object") return { ok: false, error: "Invalid JSON body" };
+    return { ok: true, data: data as SafeJsonOk["data"] };
   } catch {
     return { ok: false, error: "Invalid JSON body" };
   }
+}
+
+/** Normalize arbitrary DB JSON → GameState (light validation, no throws) */
+function toGameState(val: unknown): GameState {
+  const raw = (val && typeof val === "object" ? (val as Record<string, unknown>) : {}) || {};
+  const env = (raw.env && typeof raw.env === "object" ? (raw.env as Record<string, unknown>) : {}) || {};
+  const mission = (raw.mission && typeof raw.mission === "object" ? (raw.mission as Record<string, unknown>) : {}) || {};
+
+  const invRaw = Array.isArray(raw.inventory) ? raw.inventory : [];
+  const inventory = invRaw.map((it) => {
+    const o = (it && typeof it === "object" ? (it as Record<string, unknown>) : {}) || {};
+    return {
+      id: typeof o.id === "string" ? o.id : undefined,
+      name: typeof o.name === "string" ? o.name : "",
+      emoji: typeof o.emoji === "string" ? o.emoji : undefined,
+      status: typeof o.status === "string" ? o.status : undefined,
+      qty: typeof o.qty === "number" ? o.qty : undefined,
+    };
+  });
+
+  return {
+    env: {
+      light: env.light === "dark" || env.light === "dim" || env.light === "normal" ? (env.light as "dark" | "dim" | "normal") : undefined,
+      weather: env.weather === "rain" || env.weather === "clear" ? (env.weather as "rain" | "clear") : undefined,
+      terrain: env.terrain === "mud" || env.terrain === "rock" || env.terrain === "road" ? (env.terrain as "mud" | "rock" | "road") : undefined,
+    },
+    range: raw.range === "long" || raw.range === "close" ? (raw.range as "long" | "close") : undefined,
+    inventory,
+    mission: {
+      title: typeof mission.title === "string" ? mission.title : "Unknown",
+      objective: typeof mission.objective === "string" ? mission.objective : "",
+      mission_prompt: typeof mission.mission_prompt === "string" ? mission.mission_prompt : "",
+    },
+    flags: Array.isArray(raw.flags) ? raw.flags.filter((f): f is string => typeof f === "string") : [],
+  };
 }
 
 function fallbackText(
