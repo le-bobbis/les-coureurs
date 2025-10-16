@@ -11,8 +11,8 @@ export async function GET() {
     const missionDate = todayLocal();
 
     const { data, error } = await sb
-      .from<MissionRow>("missions")
-      .select("*")
+      .from("missions")
+      .select("*").returns<MissionRow[]>()
       .eq("date", missionDate)
       .order("slot", { ascending: true });
 
