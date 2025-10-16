@@ -2,22 +2,9 @@
 import { MissionCard } from "@/components/MissionCard";
 import { DevSeedButton } from "@/components/DevSeedButton";
 import { headers } from "next/headers";
-
-type Mission = {
-  id: string;
-  slot: number;
-  title: string;
-  brief: string;
-  displayBrief?: string;
-  objective?: string | null;
-  opening?: string | null;
-  mission_type: string | null;
-  factions: string[];
-  mission_date: string;
-};
+import type { MissionDTO } from "@/types/db";
 
 function getBaseUrl() {
-  // Prefer runtime headers (works on Vercel / dev), otherwise fall back to envs.
   const h = headers();
   const proto = h.get("x-forwarded-proto") ?? "http";
   const host = h.get("x-forwarded-host") ?? h.get("host");
@@ -27,16 +14,11 @@ function getBaseUrl() {
   return "http://localhost:3000";
 }
 
-/** Fetch today's missions with an absolute URL to avoid Turbopack relative-URL errors. */
-async function fetchMissions(): Promise<Mission[]> {
+async function fetchMissions(): Promise<MissionDTO[]> {
   const base = getBaseUrl();
-  const res = await fetch(`${base}/api/missions`, {
-    cache: "no-store",
-    // (Optional) be explicit:
-    next: { revalidate: 0 },
-  });
+  const res = await fetch(`${base}/api/missions`, { cache: "no-store", next: { revalidate: 0 } });
   if (!res.ok) return [];
-  const json = await res.json();
+  const json = (await res.json()) as { missions: MissionDTO[] };
   return json.missions ?? [];
 }
 
@@ -50,7 +32,6 @@ export default async function HomePage() {
         <p className="text-sm opacity-70">All players see the same three. Outcomes diverge in play.</p>
       </header>
 
-      {/* Dev/admin seeding controls */}
       <DevSeedButton />
 
       {missions.length === 0 ? (
@@ -63,7 +44,7 @@ export default async function HomePage() {
         {missions
           .sort((a, b) => (a.slot ?? 0) - (b.slot ?? 0))
           .map((m) => (
-            <MissionCard key={m.id} mission={m as any} />
+            <MissionCard key={m.id} mission={m} />
           ))}
       </div>
     </main>

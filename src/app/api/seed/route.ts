@@ -1,3 +1,4 @@
+// src/app/api/seed/route.ts
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabaseServer";
 import {
@@ -5,7 +6,8 @@ import {
   LLM_HEADER_RULE,
   parseMissionHeader,
 } from "@/lib/missionFormat";
-import { todayLocal } from "@/lib/today"; // uses America/Los_Angeles (or DAILY_TZ)
+import { todayLocal } from "@/lib/today";
+import type { MissionRow, LlmResponse, LlmMission } from "@/types/db";
 
 const OPENAI_MODEL = process.env.OPENAI_MISSIONS_MODEL || "gpt-4o-mini";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
@@ -13,7 +15,19 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 /** Set MISSIONS_SLOT_BASE=0 if your DB uses 0..2; default is 1..3 */
 const SLOT_BASE = Number(process.env.MISSIONS_SLOT_BASE ?? 1);
 
-const STATIC_MISSIONS = [
+type UpsertMission = Pick<
+  MissionRow,
+  "date" | "slot" | "title" | "brief" | "objective" | "opening" | "mission_type"
+> & { mission_prompt: string | null };
+
+const STATIC_MISSIONS: Array<{
+  title: string;
+  mission_type: string;
+  factions: string[];
+  brief: string;
+  objective: string;
+  opening: string;
+}> = [
   {
     title: "The Drowned Toll",
     mission_type: "Deliver",
@@ -51,19 +65,10 @@ export async function POST(req: Request) {
     const sb = supabaseServer();
     const date = todayLocal();
 
-    let rows: Array<{
-      date: string;
-      slot: number;
-      title: string;
-      brief: string;
-      objective: string | null;
-      mission_prompt: string | null;
-      opening: string | null;
-      mission_type: string | null;
-    }> = [];
+    let rows: UpsertMission[] = [];
 
     if (mode === "static") {
-      rows = STATIC_MISSIONS.map((m, idx) => {
+      rows = STATIC_MISSIONS.map<UpsertMission>((m, idx) => {
         const brief = ensureHeaderOnBrief({
           brief: m.brief,
           mission_type: m.mission_type,
@@ -75,7 +80,7 @@ export async function POST(req: Request) {
 
         return {
           date,
-          slot: SLOT_BASE + idx, // 1,2,3 (or 0,1,2 if env set)
+          slot: SLOT_BASE + idx, // 1,2,3 (or 0,1,2)
           title: m.title,
           brief,
           objective: m.objective,
@@ -85,7 +90,7 @@ export async function POST(req: Request) {
         };
       });
     } else {
-      // ---- LLM generation path (no deletes; we will UPSERT) ----
+      // ---- LLM generation path (UPSERT; no deletes) ----
       if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is not set");
 
       const system = [
@@ -137,24 +142,26 @@ export async function POST(req: Request) {
         throw new Error(`OpenAI error: ${openaiRes.status} ${txt}`);
       }
 
-      const json = await openaiRes.json();
+      const json = (await openaiRes.json()) as {
+        choices?: Array<{ message?: { content?: string } }>;
+      };
       const content = json.choices?.[0]?.message?.content ?? "{}";
 
-      let parsed: { missions: any[] } = { missions: [] };
+      let parsed: LlmResponse;
       try {
-        parsed = JSON.parse(content);
+        parsed = JSON.parse(content) as LlmResponse;
       } catch {
         throw new Error("Failed to parse JSON from LLM");
       }
 
-      const normalized = (parsed.missions || [])
-        .filter(Boolean)
+      const normalized = (parsed.missions ?? [])
+        .filter((m): m is LlmMission => !!m && typeof m.title === "string")
         .slice(0, 3)
-        .map((m: any) => {
-          const title = String(m?.title || "").trim();
-          const rawBrief = String(m?.brief || "").trim();
-          const objective = String(m?.objective || "").trim().slice(0, 200);
-          const opening = String(m?.opening || "").trim().slice(0, 500);
+        .map<UpsertMission>((m, idx) => {
+          const title = String(m.title || "").trim();
+          const rawBrief = String(m.brief || "").trim();
+          const objective = String(m.objective || "").trim().slice(0, 200);
+          const opening = String(m.opening || "").trim().slice(0, 500);
 
           const brief = ensureHeaderOnBrief({
             brief: rawBrief,
@@ -163,9 +170,19 @@ export async function POST(req: Request) {
 
           const mission_type = parseMissionHeader(brief).mission_type ?? "Unknown";
 
-          return { title, brief, objective, opening, mission_type };
+          return {
+            date,
+            slot: SLOT_BASE + idx, // 1,2,3 (or 0,1,2)
+            title,
+            brief,
+            objective,
+            mission_prompt: null,
+            opening,
+            mission_type,
+          };
         });
 
+      // Pad if < 3
       while (normalized.length < 3) {
         const s = STATIC_MISSIONS[normalized.length];
         const brief = ensureHeaderOnBrief({
@@ -175,28 +192,22 @@ export async function POST(req: Request) {
           teaserFallback: s.brief,
         });
         normalized.push({
+          date,
+          slot: SLOT_BASE + normalized.length,
           title: s.title,
           brief,
           objective: s.objective,
+          mission_prompt: null,
           opening: s.opening,
           mission_type: parseMissionHeader(brief).mission_type ?? "Unknown",
         });
       }
 
-      rows = normalized.map((n, idx) => ({
-        date,
-        slot: SLOT_BASE + idx, // 1,2,3 (or 0,1,2)
-        title: n.title,
-        brief: n.brief,
-        objective: n.objective,
-        mission_prompt: null,
-        opening: n.opening,
-        mission_type: n.mission_type,
-      }));
+      rows = normalized;
       // ---- end LLM path ----
     }
 
-    // UPSERT instead of delete+insert to preserve IDs and avoid FK breakage
+    // UPSERT by (date, slot) to keep IDs stable; avoids FK issues with sessions
     const { data, error } = await sb
       .from("missions")
       .upsert(rows, { onConflict: "date,slot", ignoreDuplicates: false })
@@ -208,8 +219,11 @@ export async function POST(req: Request) {
       { ok: true, upserted: data?.length ?? 0, missions: data },
       { status: 200 }
     );
-  } catch (e: any) {
+  } catch (e) {
     console.error("[/api/seed] POST failed:", e);
-    return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: e instanceof Error ? e.message : "Unknown error" },
+      { status: 500 }
+    );
   }
 }
