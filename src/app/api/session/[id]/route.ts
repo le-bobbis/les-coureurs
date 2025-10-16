@@ -2,7 +2,7 @@
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
-+ import { supabaseAdmin } from "@/lib/dbAdmin";
+import { supabaseAdmin } from "@/lib/dbAdmin";
 
 type Params = { id: string };
 
