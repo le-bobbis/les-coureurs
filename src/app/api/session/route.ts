@@ -2,7 +2,7 @@
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/db";
+import { supabaseAdmin } from "@/lib/dbAdmin";
 import { randomUUID } from "crypto";
 
 export async function POST(req: Request) {

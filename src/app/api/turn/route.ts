@@ -2,7 +2,7 @@
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/db";
+import { supabaseAdmin } from "@/lib/dbAdmin";
 import { resolveTurn } from "@/lib/rules";
 import { SYSTEM_GM, buildUserPrompt } from "@/lib/prompts";
 import type { EngineOutput, GameState, Stats } from "@/types";
