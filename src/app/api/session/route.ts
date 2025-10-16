@@ -12,6 +12,12 @@ type SeedRow = {
   opening: string | null;
 };
 
+type SeedInput = Partial<SeedRow> & {
+  mission_type?: string | null;
+  factions?: string[] | null;
+};
+
+
 function systemPrompt() {
   return `
 You are an expert narrative designer for *Les Coureurs*, a survival-horror RPG set in an alternate early-19th-century Europe, ten years after the dead came back to life.
@@ -83,7 +89,7 @@ function taggedBrief(missionType: string, factions: string[], brief: string) {
   return `${tag} — ${body}`.slice(0, 240);
 }
 
-function sanitizeSeed(m: any, slot: number): SeedRow {
+function sanitizeSeed(m: SeedInput | null | undefined, slot: number): SeedRow {
   const title = String(m?.title ?? "").trim().slice(0, 120) || `Mission ${slot}`;
   const missionType = String(m?.mission_type ?? "").trim() || "Scout/Recon";
   const factions = Array.isArray(m?.factions) ? m.factions.slice(0, 2).map(String) : [];
@@ -100,7 +106,7 @@ function sanitizeSeed(m: any, slot: number): SeedRow {
   return { slot, title, brief, objective, mission_prompt, opening };
 }
 
-function fallbackSeeds(date: string): SeedRow[] {
+function fallbackSeeds(_date: string): SeedRow[] {
   return [
     sanitizeSeed(
       {
@@ -186,7 +192,7 @@ async function generateWithLLM(date: string) {
     const content = j?.choices?.[0]?.message?.content?.trim() ?? "";
 
     // Try parse JSON payload from content
-    let parsed: any = null;
+    let parsed: unknown = null;
     try {
       parsed = JSON.parse(content);
     } catch {
@@ -214,7 +220,7 @@ async function generateWithLLM(date: string) {
     const seeds = ([1, 2, 3] as const).map((s) => bySlot[s] || fall[s - 1]);
 
     return { seeds, debug: { source: "llm", status } };
-  } catch (e: any) {
+  } catch (e: unknown) {
     return {
       seeds: fallbackSeeds(date),
       debug: { source: "static", reason: "exception", error: String(e).slice(0, 300), rawPreview: raw.slice(0, 300), status },
@@ -244,7 +250,7 @@ export async function POST(req: Request) {
     } catch {}
 
     let seeds: SeedRow[] = [];
-    let debug: any = null;
+    let debug: unknown = null;
 
     if (mode === "static") {
       seeds = fallbackSeeds(today);
@@ -316,7 +322,7 @@ export async function POST(req: Request) {
       count: results.length,
       results,
     });
-  } catch (e: any) {
+  } catch (e: unknown) {
     return NextResponse.json({ ok: false, error: e?.message ?? String(e) }, { status: 500 });
   }
 }

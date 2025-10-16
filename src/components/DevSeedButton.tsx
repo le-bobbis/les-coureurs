@@ -26,7 +26,7 @@ export function DevSeedButton() {
 
       // optional: quick auto-refresh so the cards appear immediately
       setTimeout(() => window.location.reload(), 650);
-    } catch (e: any) {
+    } catch (e: unknown) {
       setResult(`❌ ${e.message || "Unknown error"}`);
     } finally {
       setLoading(null);

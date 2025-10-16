@@ -8,8 +8,8 @@ type TurnRow = {
   idx: number;
   player_input?: string;
   narrative: string;
-  summary?: any;
-  debug?: any;
+  summary?: unknown;
+  debug?: unknown;
   created_at?: string;
 };
 
