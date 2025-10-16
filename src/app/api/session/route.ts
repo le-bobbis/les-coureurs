@@ -5,7 +5,6 @@ import { todayLocal } from "@/lib/today";
 
 export const runtime = "nodejs";
 
-// ---- Types kept minimal and local to avoid unused warnings ----
 type SeedRow = {
   slot: number;
   title: string;
@@ -29,8 +28,8 @@ function sanitizeSeed(m: Partial<SeedRow> | null | undefined, slot: number): See
   return { slot, title, brief: briefRaw, objective, mission_prompt, opening };
 }
 
-// Static fallback seeds (kept small + safe)
-function fallbackSeeds(date: string): SeedRow[] {
+function fallbackSeeds(_date: string): SeedRow[] {
+  // You can optionally vary by _date later; for now fixed seeds.
   return [
     sanitizeSeed(
       {
@@ -73,35 +72,26 @@ function fallbackSeeds(date: string): SeedRow[] {
 
 /**
  * GET /api/session
- * Returns a seed set for today (static fallback; easy to extend to LLM later).
- * Query params:
- *   - date?: YYYY-MM-DD (defaults to todayLocal())
+ * Returns a seed set for a given date (defaults to today).
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const date = url.searchParams.get("date") || todayLocal();
-
-  // Right now we just serve static seeds; this keeps build stable.
-  const seeds = fallbackSeeds(date);
+  const seeds = fallbackSeeds(date); // <-- use `date` so ESLint is happy
   return NextResponse.json({ ok: true, date, seeds, route: "seed", method: "GET" });
 }
 
 /**
  * POST /api/session
  * Body: { missionId?: string }
- * Creates a session row in Supabase and returns { sessionId }.
- * If Supabase insert fails, returns a 500 with a safe message.
+ * Creates a session row and returns { sessionId }.
  */
 export async function POST(req: Request) {
   try {
     const body = (await req.json().catch(() => ({}))) as { missionId?: string };
     const missionId = typeof body?.missionId === "string" ? body.missionId : null;
 
-    const sb = supabaseAdmin;
-
-    // Insert a new session; columns are minimal and won't error if you add more later.
-    // Assumes your table is named "sessions" and has a default 'id' UUID.
-    const { data, error } = await sb
+    const { data, error } = await supabaseAdmin
       .from("sessions")
       .insert([{ mission_id: missionId }])
       .select("id")

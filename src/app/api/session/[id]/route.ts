@@ -1,32 +1,49 @@
+// src/app/api/session/[id]/route.ts
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/db";
 
-export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
-  try {
-    const { id } = await ctx.params;
+function getErrorMessage(e: unknown) {
+  return e instanceof Error ? e.message : String(e);
+}
 
-    const { data: session, error: sErr } = await supabaseAdmin
+// GET /api/session/:id
+export async function GET(
+  _req: Request,
+  ctx: { params: { id: string } }
+) {
+  const id = ctx?.params?.id;
+
+  try {
+    if (!id) {
+      return NextResponse.json(
+        { ok: false, error: "Missing session id" },
+        { status: 400 }
+      );
+    }
+
+    const sb = supabaseAdmin;
+
+    const { data: session, error: sErr } = await sb
       .from("sessions")
-      .select("id, mission_id, actions_remaining, state, created_at")
+      .select("*")
       .eq("id", id)
       .single();
 
-    if (sErr || !session) {
-      return NextResponse.json({ ok: false, error: sErr?.message || "Session not found" }, { status: 404 });
-    }
+    if (sErr) throw sErr;
 
-    const { data: turns, error: tErr } = await supabaseAdmin
+    const { data: turns, error: tErr } = await sb
       .from("turns")
-      .select("id, idx, player_input, narrative, summary, debug, created_at")
+      .select("*")
       .eq("session_id", id)
       .order("idx", { ascending: true });
 
-    if (tErr) {
-      return NextResponse.json({ ok: false, error: tErr.message }, { status: 500 });
-    }
+    if (tErr) throw tErr;
 
     return NextResponse.json({ ok: true, session, turns: turns ?? [] });
   } catch (e: unknown) {
-    return NextResponse.json({ ok: false, error: e?.message || String(e) }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: getErrorMessage(e) },
+      { status: 500 }
+    );
   }
 }
