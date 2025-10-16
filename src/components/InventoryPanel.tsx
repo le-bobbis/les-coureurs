@@ -1,5 +1,6 @@
+// src/components/InventoryPanel.tsx
 'use client';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 type Item = {
   id: string;
@@ -15,8 +16,9 @@ export default function InventoryPanel({ profileId }: { profileId: string }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     try {
+      if (!profileId) return;
       setLoading(true);
       setError(null);
       const res = await fetch(`/api/inventory?profileId=${encodeURIComponent(profileId)}`);
@@ -28,11 +30,13 @@ export default function InventoryPanel({ profileId }: { profileId: string }) {
     } finally {
       setLoading(false);
     }
-  }
+  }, [profileId]);
 
-  useEffect(() => { if (profileId) void refresh(); }, [profileId]);
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
 
-  async function useItem(itemId: string, opts: { consume?: number; damage?: boolean }) {
+  async function applyItemChange(itemId: string, opts: { consume?: number; damage?: boolean }) {
     try {
       setLoading(true);
       setError(null);
@@ -45,7 +49,7 @@ export default function InventoryPanel({ profileId }: { profileId: string }) {
       if (json.error) setError(json.error);
       await refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to use item');
+      setError(e instanceof Error ? e.message : 'Failed to update item');
     } finally {
       setLoading(false);
     }
@@ -70,23 +74,30 @@ export default function InventoryPanel({ profileId }: { profileId: string }) {
               <span className="text-lg leading-none">{it.emoji}</span>
               <div>
                 <div className="text-sm font-medium leading-tight">{it.name}</div>
-                <div className="text-xs opacity-70">qty: {it.qty}{it.status && it.status !== 'ok' ? ` · ${it.status}` : ''}</div>
+                <div className="text-xs opacity-70">
+                  qty: {it.qty}
+                  {it.status && it.status !== 'ok' ? ` · ${it.status}` : ''}
+                </div>
                 <div className="mt-1 text-xs opacity-80 max-w-[36ch]">{it.descr}</div>
               </div>
             </div>
             <div className="flex items-center gap-2">
               <button
                 className="rounded border border-white/15 px-2 py-1 text-xs"
-                onClick={() => void useItem(it.id, { consume: 1 })}
+                onClick={() => void applyItemChange(it.id, { consume: 1 })}
                 disabled={loading}
                 title="Consume 1"
-              >-1</button>
+              >
+                -1
+              </button>
               <button
                 className="rounded border border-white/15 px-2 py-1 text-xs"
-                onClick={() => void useItem(it.id, { damage: true })}
+                onClick={() => void applyItemChange(it.id, { damage: true })}
                 disabled={loading}
                 title="Mark damage"
-              >damage</button>
+              >
+                damage
+              </button>
             </div>
           </li>
         ))}
