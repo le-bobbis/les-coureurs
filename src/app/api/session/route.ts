@@ -1,118 +1,83 @@
 // src/app/api/session/route.ts
-import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/db";
-import { todayLocal } from "@/lib/today";
-
 export const runtime = "nodejs";
 
-type SeedRow = {
-  slot: number;
-  title: string;
-  brief: string;
-  objective: string | null;
-  mission_prompt: string | null;
-  opening: string | null;
-};
+import { NextResponse } from "next/server";
+import { supabaseAdmin } from "@/lib/db";
+import { randomUUID } from "crypto";
 
-function sanitizeSeed(m: Partial<SeedRow> | null | undefined, slot: number): SeedRow {
-  const title = String(m?.title ?? "").trim().slice(0, 120) || `Mission ${slot}`;
-  const briefRaw =
-    String(m?.brief ?? m?.mission_prompt ?? "").trim().slice(0, 160) ||
-    "A dangerous task awaits in the Brume.";
-  const objective = (m?.objective ? String(m.objective) : null)?.trim()?.slice(0, 160) || null;
-  const mission_prompt = (m?.mission_prompt ? String(m.mission_prompt) : null)
-    ?.trim()
-    ?.slice(0, 500) || null;
-  const opening = (m?.opening ? String(m.opening) : null)?.trim()?.slice(0, 700) || null;
-
-  return { slot, title, brief: briefRaw, objective, mission_prompt, opening };
-}
-
-function fallbackSeeds(date: string): SeedRow[] {
-  // mark param as intentionally used to satisfy eslint
-  void date;
-
-  return [
-    sanitizeSeed(
-      {
-        title: "Sounding the Quarry",
-        brief: "Strange bell from the quarry; wardens uneasy.",
-        objective: "Identify the bell’s source and the safest approach.",
-        opening:
-          "Cold mist pools in stepped stone. The bell tolls again—too steady to be wind.",
-        mission_prompt:
-          "Scout the old quarry at dawn and determine what’s ringing the bell.",
-      },
-      1
-    ),
-    sanitizeSeed(
-      {
-        title: "Missing Cart at Birch Fen",
-        brief: "Caravan vanished near the fen trailhead.",
-        objective: "Recover supplies; avoid unnecessary attention.",
-        opening:
-          "Cart ruts end in reed-choked mud. Lantern glass litters the path.",
-        mission_prompt:
-          "Track the caravan’s last stretch and secure anything recoverable.",
-      },
-      2
-    ),
-    sanitizeSeed(
-      {
-        title: "The Tollhouse Ledger",
-        brief: "Rumors of bribed tollkeepers; a ledger may exist.",
-        objective: "Acquire the ledger without alerting the keepers.",
-        opening:
-          "A shutter bangs in the wind. Ink-stained fingers twitch at the sight of coin.",
-        mission_prompt:
-          "Infiltrate the tollhouse after dusk and locate the ledger.",
-      },
-      3
-    ),
-  ];
-}
-
-/**
- * GET /api/session
- * Returns a seed set for a given date (defaults to today).
- */
-export async function GET(req: NextRequest) {
-  const url = new URL(req.url);
-  const date = url.searchParams.get("date") || todayLocal();
-  const seeds = fallbackSeeds(date);
-  return NextResponse.json({ ok: true, date, seeds, route: "seed", method: "GET" });
-}
-
-/**
- * POST /api/session
- * Body: { missionId?: string }
- * Creates a session row and returns { sessionId }.
- */
-export async function POST(req: NextRequest) {
+export async function POST(req: Request) {
   try {
-    const body = (await req.json().catch(() => ({}))) as { missionId?: string };
-    const missionId = typeof body?.missionId === "string" ? body.missionId : null;
-
-    const { data, error } = await supabaseAdmin
-      .from("sessions")
-      .insert([{ mission_id: missionId }])
-      .select("id")
-      .single();
-
-    if (error) {
-      console.error("[/api/session] insert failed:", error);
-      return NextResponse.json(
-        { ok: false, message: "Failed to create session." },
-        { status: 500 }
-      );
+    const body = await req.json().catch(() => ({}));
+    const missionId: string | undefined = body?.missionId;
+    if (!missionId) {
+      return NextResponse.json({ error: "missionId required" }, { status: 400 });
     }
 
-    return NextResponse.json({ ok: true, sessionId: data?.id ?? null });
-  } catch (e) {
-    console.error("[/api/session] POST exception:", e);
-    return NextResponse.json(
-        { ok: false, message: "Unexpected error creating session." },
-        { status: 500 }
-    );
+    // Load mission (snapshot the important fields)
+    const { data: mission, error: mErr } = await supabaseAdmin
+      .from("missions")
+      .select("id, title, brief, objective, mission_prompt, opening, date, slot")
+      .eq("id", missionId)
+      .single();
+    if (mErr || !mission) {
+      return NextResponse.json({ error: mErr?.message || "mission not found" }, { status: 404 });
+    }
+
+    const userId = randomUUID(); // temp until Phase 7 auth
+
+    // Create session with a mission snapshot in state
+    const missionSnapshot = {
+      id: mission.id,
+      title: mission.title,
+      brief: mission.brief,
+      objective: mission.objective,
+      prompt: mission.mission_prompt,
+      date: mission.date,
+      slot: mission.slot,
+    };
+
+    const { data: created, error: sErr } = await supabaseAdmin
+      .from("sessions")
+      .insert([{
+        mission_id: mission.id,
+        user_id: userId,
+        actions_remaining: 10,
+        state: { mission: missionSnapshot },
+      }])
+      .select("id, actions_remaining")
+      .single();
+    if (sErr || !created) {
+      return NextResponse.json({ error: sErr?.message || "session create failed" }, { status: 500 });
+    }
+
+    const sessionId = created.id;
+
+    // Optional: Turn 0 intro (does NOT consume action)
+    if (mission.opening && mission.opening.trim().length > 0) {
+      await supabaseAdmin.from("turns").insert([{
+        session_id: sessionId,
+        idx: 0,
+        player_input: "(mission start)",
+        narrative:
+`${mission.opening.trim()}
+
+---
+**Summary**
+- Mission: ${mission.title}
+- Objective: ${mission.objective ?? "—"}
+- Scene set. Await your first action.
+- **Actions remaining:** ${created.actions_remaining}`,
+        summary: JSON.stringify([
+          `Mission: ${mission.title}`,
+          `Objective: ${mission.objective ?? "—"}`,
+          "Scene set",
+        ]),
+        debug: { intro: true, mission: missionSnapshot },
+      }]);
+    }
+
+    return NextResponse.json({ ok: true, sessionId });
+  } catch (e: unknown) {
+    return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });
   }
 }

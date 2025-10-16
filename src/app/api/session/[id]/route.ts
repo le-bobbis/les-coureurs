@@ -1,48 +1,50 @@
 // src/app/api/session/[id]/route.ts
-import { NextRequest, NextResponse } from "next/server";
+export const runtime = "nodejs";
+
+import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/db";
 
-function getErrorMessage(e: unknown) {
-  return e instanceof Error ? e.message : String(e);
-}
+type Params = { id: string };
 
-// GET /api/session/:id
 export async function GET(
-  _req: NextRequest,
-  context: { params: Promise<{ id: string }> }
+  _req: Request,
+  ctx: { params: Promise<Params> } // <-- params is async in Next.js 15
 ) {
-  const { id } = await context.params;
-
   try {
-    if (!id) {
+    const { id: sessionId } = await ctx.params; // <-- await it
+
+    if (!sessionId) {
+      return NextResponse.json({ error: "id required" }, { status: 400 });
+    }
+
+    const { data: session, error: sErr } = await supabaseAdmin
+      .from("sessions")
+      .select("id, mission_id, actions_remaining, state, created_at")
+      .eq("id", sessionId)
+      .single();
+
+    if (sErr || !session) {
       return NextResponse.json(
-        { ok: false, error: "Missing session id" },
-        { status: 400 }
+        { error: sErr?.message || "not found" },
+        { status: 404 }
       );
     }
 
-    const sb = supabaseAdmin;
-
-    const { data: session, error: sErr } = await sb
-      .from("sessions")
-      .select("*")
-      .eq("id", id)
-      .single();
-
-    if (sErr) throw sErr;
-
-    const { data: turns, error: tErr } = await sb
+    const { data: turns, error: tErr } = await supabaseAdmin
       .from("turns")
-      .select("*")
-      .eq("session_id", id)
-      .order("idx", { ascending: true });
+      .select("idx, player_input, narrative, summary, debug, created_at")
+      .eq("session_id", sessionId)
+      .order("idx", { ascending: true })
+      .limit(50);
 
-    if (tErr) throw tErr;
+    if (tErr) {
+      return NextResponse.json({ error: tErr.message }, { status: 500 });
+    }
 
     return NextResponse.json({ ok: true, session, turns: turns ?? [] });
   } catch (e: unknown) {
     return NextResponse.json(
-      { ok: false, error: getErrorMessage(e) },
+      { error: e instanceof Error ? e.message : String(e) },
       { status: 500 }
     );
   }

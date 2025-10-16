@@ -1,52 +1,93 @@
-// src/app/page.tsx
-import { MissionCard } from "@/components/MissionCard";
-import { DevSeedButton } from "@/components/DevSeedButton";
-import { headers } from "next/headers";
-import type { MissionDTO } from "@/types/db";
+"use client";
 
-function getBaseUrl() {
-  const h = headers();
-  const proto = h.get("x-forwarded-proto") ?? "http";
-  const host = h.get("x-forwarded-host") ?? h.get("host");
-  if (host) return `${proto}://${host}`;
-  if (process.env.NEXT_PUBLIC_BASE_URL) return process.env.NEXT_PUBLIC_BASE_URL;
-  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
-  return "http://localhost:3000";
-}
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 
-async function fetchMissions(): Promise<MissionDTO[]> {
-  const base = getBaseUrl();
-  const res = await fetch(`${base}/api/missions`, { cache: "no-store", next: { revalidate: 0 } });
-  if (!res.ok) return [];
-  const json = (await res.json()) as { missions: MissionDTO[] };
-  return json.missions ?? [];
-}
+type Mission = {
+  id: string;
+  date: string;
+  slot: number;
+  title: string;
+  brief: string;
+  objective?: string | null;
+};
 
-export default async function HomePage() {
-  const missions = await fetchMissions();
+export default function Home() {
+  const router = useRouter();
+  const [missions, setMissions] = useState<Mission[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      const res = await fetch("/api/missions", { cache: "no-store" });
+      const data = await res.json();
+      if (!data?.ok) {
+        setErr(data?.error || "Failed to load missions");
+        setMissions([]);
+        return;
+      }
+      setMissions(data.missions || []);
+    })();
+  }, []);
+
+  async function startSession(missionId: string) {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/session", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ missionId }),
+      });
+      const data = await res.json();
+      if (!data?.ok) {
+        alert(data?.error || "Failed to create session");
+        return;
+      }
+      router.push(`/play?session=${data.sessionId}`);
+    } finally {
+      setLoading(false);
+    }
+  }
 
   return (
-    <main className="max-w-xl mx-auto p-4 space-y-4">
-      <header className="mb-2">
-        <h1 className="text-2xl font-bold">Les Coureurs — Daily Missions</h1>
-        <p className="text-sm opacity-70">All players see the same three. Outcomes diverge in play.</p>
-      </header>
+    <main className="mx-auto max-w-xl p-4 text-white">
+      <h1 className="text-2xl font-bold mb-3">Les Coureurs — Daily Missions</h1>
 
-      <DevSeedButton />
+      {err ? <div className="text-red-400 mb-3">{err}</div> : null}
 
-      {missions.length === 0 ? (
-        <div className="text-sm opacity-80 border border-zinc-800 rounded-xl p-4">
-          No missions available for today yet.
-        </div>
-      ) : null}
+      {missions === null ? (
+        <div className="opacity-70">Loading…</div>
+      ) : missions.length === 0 ? (
+        <div className="opacity-70">No missions seeded for today.</div>
+      ) : (
+        <div className="grid gap-3">
+          {missions.map((m) => (
+            <div key={m.id} className="rounded border border-white/20 p-3 bg-black/30">
+              <div className="flex items-center justify-between mb-1">
+                <h2 className="font-semibold">{m.title}</h2>
+                <span className="text-xs opacity-70">Slot {m.slot}</span>
+              </div>
 
-      <div className="grid gap-3">
-        {missions
-          .sort((a, b) => (a.slot ?? 0) - (b.slot ?? 0))
-          .map((m) => (
-            <MissionCard key={m.id} mission={m} />
+              <p className="opacity-90 mb-2">{m.brief}</p>
+
+              {m.objective ? (
+                <p className="text-sm opacity-80 mb-2">
+                  <span className="opacity-70">Objective:</span> {m.objective}
+                </p>
+              ) : null}
+
+              <button
+                onClick={() => startSession(m.id)}
+                disabled={loading}
+                className="rounded border border-white/20 px-3 py-1 disabled:opacity-50"
+              >
+                {loading ? "Starting…" : "Start"}
+              </button>
+            </div>
           ))}
-      </div>
+        </div>
+      )}
     </main>
   );
 }
