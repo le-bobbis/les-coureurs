@@ -10,15 +10,17 @@ export async function GET() {
     const sb = supabaseServer();
     const missionDate = todayLocal();
 
+    // Use filterable builder — no `.returns()` here
     const { data, error } = await sb
       .from("missions")
-      .select("*").returns<MissionRow[]>()
+      .select("*")
       .eq("date", missionDate)
       .order("slot", { ascending: true });
 
     if (error) throw error;
 
-    const missions: MissionDTO[] = (data ?? []).map((m) => {
+    // Cast results safely
+    const missions: MissionDTO[] = ((data ?? []) as MissionRow[]).map((m) => {
       const parsed = parseMissionHeader(m.brief ?? "");
       const mission_type = m.mission_type ?? parsed.mission_type ?? "Unknown";
 
