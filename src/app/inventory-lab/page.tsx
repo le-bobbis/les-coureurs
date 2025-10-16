@@ -27,7 +27,7 @@ type ApiErr = {
 
 type ApiResponse = ApiOk | ApiErr;
 
-export default function InventoryLabPage(): JSX.Element {
+export default function InventoryLabPage() {
   const [text, setText] = useState('');
   const [draft, setDraft] = useState<Draft | null>(null);
   const [profileId, setProfileId] = useState<string | null>(null);
