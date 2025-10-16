@@ -1,77 +1,57 @@
+// src/components/DevSeedButton.tsx
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 
-export default function DevSeedButton() {
-  const [loading, setLoading] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
-  const [detail, setDetail] = useState<any>(null);
-  const [mode, setMode] = useState<"llm" | "static">("llm");
-  const router = useRouter();
+export function DevSeedButton() {
+  const [loading, setLoading] = useState<"llm" | "static" | null>(null);
+  const [result, setResult] = useState<string | null>(null);
 
-  async function seed() {
+  async function handleSeed(mode: "llm" | "static") {
     try {
-      setLoading(true);
-      setMsg(null);
-      setDetail(null);
+      setLoading(mode);
+      setResult(null);
 
-      const res = await fetch(`/api/seed?mode=${mode}`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ mode }),
-      });
+      const res = await fetch(`/api/seed?mode=${mode}`, { method: "POST" });
       const json = await res.json();
 
-      if (!res.ok || !json?.ok) throw new Error(json?.error || "Seed failed");
+      if (!res.ok || !json?.ok) {
+        throw new Error(json?.error || "Failed to seed missions");
+      }
 
-      setMsg(
-        `${json.mode_used === "llm" ? "LLM" : "Static"}: ${json.count} missions for ${json.date}.`
-      );
-      setDetail(json.llm_debug || null);
+      const msg =
+        json.inserted ? `✅ Inserted ${json.inserted} missions (${mode.toUpperCase()})`
+                      : "⚠️ No missions inserted.";
+      setResult(msg);
 
-      router.refresh();
+      // optional: quick auto-refresh so the cards appear immediately
+      setTimeout(() => window.location.reload(), 650);
     } catch (e: any) {
-      setMsg(e.message || "Seed failed");
-      setDetail(null);
+      setResult(`❌ ${e.message || "Unknown error"}`);
     } finally {
-      setLoading(false);
+      setLoading(null);
     }
   }
 
   return (
-    <div className="mb-4 flex flex-col gap-2 rounded-lg border border-white/20 p-3">
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-2 text-sm">
-          <label className="opacity-80">Mode:</label>
-          <select
-            value={mode}
-            onChange={(e) => setMode(e.target.value as "llm" | "static")}
-            className="rounded border border-white/30 bg-transparent px-2 py-1 text-sm"
-          >
-            <option value="llm">LLM (uses OPENAI_API_KEY)</option>
-            <option value="static">Static</option>
-          </select>
-        </div>
+    <div className="flex flex-col sm:flex-row gap-2 items-start sm:items-center mt-4">
+      <button
+        onClick={() => handleSeed("llm")}
+        disabled={!!loading}
+        className="rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2 text-sm hover:bg-zinc-800 disabled:opacity-50"
+      >
+        {loading === "llm" ? "Seeding…" : "Seed Missions (LLM)"}
+      </button>
 
-        <button
-          onClick={seed}
-          disabled={loading}
-          className="rounded-md border border-white/30 px-3 py-1 text-sm hover:bg-white/10 disabled:opacity-50"
-        >
-          {loading ? "Working…" : "Seed today’s missions"}
-        </button>
-      </div>
+      <button
+        onClick={() => handleSeed("static")}
+        disabled={!!loading}
+        className="rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2 text-sm hover:bg-zinc-800 disabled:opacity-50"
+      >
+        {loading === "static" ? "Seeding…" : "Seed Missions (Static)"}
+      </button>
 
-      {msg && <span className="text-sm opacity-90">{msg}</span>}
-      {detail && (
-        <details className="text-xs opacity-80">
-          <summary>LLM debug</summary>
-          <pre className="mt-1 whitespace-pre-wrap break-words rounded bg-white/5 p-2">
-            {JSON.stringify(detail, null, 2)}
-          </pre>
-        </details>
-      )}
+      {result && <p className="text-xs opacity-80 mt-1 sm:mt-0 sm:ml-2">{result}</p>}
     </div>
   );
 }
