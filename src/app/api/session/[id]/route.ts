@@ -1,5 +1,5 @@
 // src/app/api/session/[id]/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/db";
 
 function getErrorMessage(e: unknown) {
@@ -8,10 +8,10 @@ function getErrorMessage(e: unknown) {
 
 // GET /api/session/:id
 export async function GET(
-  _req: Request,
-  ctx: { params: { id: string } }
+  _req: NextRequest,
+  context: { params: Promise<{ id: string }> }
 ) {
-  const id = ctx?.params?.id;
+  const { id } = await context.params;
 
   try {
     if (!id) {

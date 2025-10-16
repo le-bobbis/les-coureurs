@@ -1,5 +1,5 @@
 // src/app/api/session/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/db";
 import { todayLocal } from "@/lib/today";
 
@@ -28,8 +28,10 @@ function sanitizeSeed(m: Partial<SeedRow> | null | undefined, slot: number): See
   return { slot, title, brief: briefRaw, objective, mission_prompt, opening };
 }
 
-function fallbackSeeds(_date: string): SeedRow[] {
-  // You can optionally vary by _date later; for now fixed seeds.
+function fallbackSeeds(date: string): SeedRow[] {
+  // mark param as intentionally used to satisfy eslint
+  void date;
+
   return [
     sanitizeSeed(
       {
@@ -74,10 +76,10 @@ function fallbackSeeds(_date: string): SeedRow[] {
  * GET /api/session
  * Returns a seed set for a given date (defaults to today).
  */
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const date = url.searchParams.get("date") || todayLocal();
-  const seeds = fallbackSeeds(date); // <-- use `date` so ESLint is happy
+  const seeds = fallbackSeeds(date);
   return NextResponse.json({ ok: true, date, seeds, route: "seed", method: "GET" });
 }
 
@@ -86,7 +88,7 @@ export async function GET(req: Request) {
  * Body: { missionId?: string }
  * Creates a session row and returns { sessionId }.
  */
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   try {
     const body = (await req.json().catch(() => ({}))) as { missionId?: string };
     const missionId = typeof body?.missionId === "string" ? body.missionId : null;
@@ -109,8 +111,8 @@ export async function POST(req: Request) {
   } catch (e) {
     console.error("[/api/session] POST exception:", e);
     return NextResponse.json(
-      { ok: false, message: "Unexpected error creating session." },
-      { status: 500 }
+        { ok: false, message: "Unexpected error creating session." },
+        { status: 500 }
     );
   }
 }
