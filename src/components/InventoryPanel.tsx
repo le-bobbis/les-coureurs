@@ -1,78 +1,97 @@
-// src/app/api/inventory/add/route.ts
-// Dev-only helper to add or increment an item directly (no LLM).
-// Uses service role so it bypasses RLS—do not ship to prod as-is.
+'use client';
+import { useEffect, useState } from 'react';
 
-export const runtime = "nodejs";
-
-import { NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/dbAdmin";
-
-type Body = {
-  profile_id?: string;
-  item_slug?: string | null;
-  name?: string;
-  emoji?: string;     // REQUIRED by your schema
-  descr?: string;     // REQUIRED by your schema
-  qty?: number;       // default 1
-  meta?: Record<string, unknown>; // jsonb
+type Item = {
+  id: string;
+  name: string;
+  emoji: string;
+  descr: string;
+  qty: number;
+  status: 'ok' | 'damaged' | 'destroyed';
 };
 
-export async function POST(req: Request) {
-  try {
-    const body = (await req.json()) as Body;
+export default function InventoryPanel({ profileId }: { profileId: string }) {
+  const [items, setItems] = useState<Item[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-    if (!body.profile_id || !body.name || !body.emoji || !body.descr) {
-      return NextResponse.json(
-        { error: "profile_id, name, emoji, descr are required" },
-        { status: 400 }
-      );
+  async function refresh() {
+    try {
+      setLoading(true);
+      setError(null);
+      const res = await fetch(`/api/inventory?profileId=${encodeURIComponent(profileId)}`);
+      const json = await res.json();
+      if (json.error) setError(json.error);
+      setItems((json.items ?? []) as Item[]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load inventory');
+    } finally {
+      setLoading(false);
     }
-
-    const qty = Math.max(1, Math.floor(body.qty ?? 1));
-
-    // Upsert-ish: (profile_id + item_slug) else (profile_id + name)
-    let query = supabaseAdmin
-      .from("inventory")
-      .select("id, qty")
-      .eq("profile_id", body.profile_id)
-      .limit(1);
-
-    if (body.item_slug) query = query.eq("item_slug", body.item_slug);
-    else query = query.eq("name", body.name);
-
-    const { data: rows, error: findErr } = await query;
-    if (findErr) return NextResponse.json({ error: findErr.message }, { status: 500 });
-
-    const existing = (rows as { id: string; qty: number }[] | null)?.[0];
-
-    if (existing) {
-      const { error: updErr } = await supabaseAdmin
-        .from("inventory")
-        .update({ qty: (existing.qty ?? 0) + qty })
-        .eq("id", existing.id);
-      if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
-      return NextResponse.json({ error: null, mode: "increment" });
-    }
-
-    const { error: insErr } = await supabaseAdmin.from("inventory").insert({
-      profile_id: body.profile_id,
-      item_slug: body.item_slug ?? null,
-      name: body.name,
-      emoji: body.emoji,
-      descr: body.descr,
-      qty,
-      status: "ok",
-      meta: body.meta ?? {},
-    });
-    if (insErr) return NextResponse.json({ error: insErr.message }, { status: 500 });
-
-    return NextResponse.json({ error: null, mode: "insert" });
-  } catch (e) {
-    const message = e instanceof Error ? e.message : "Invalid request body";
-    return NextResponse.json({ error: message }, { status: 400 });
   }
-}
 
-export async function GET() {
-  return NextResponse.json({ error: "Use POST", hint: "POST /api/inventory/add" }, { status: 405 });
+  useEffect(() => { if (profileId) void refresh(); }, [profileId]);
+
+  async function useItem(itemId: string, opts: { consume?: number; damage?: boolean }) {
+    try {
+      setLoading(true);
+      setError(null);
+      const res = await fetch('/api/inventory/use', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemId, ...opts }),
+      });
+      const json = await res.json();
+      if (json.error) setError(json.error);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to use item');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="rounded-lg border border-white/15 bg-black/30 p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <h3 className="font-semibold">Inventory</h3>
+        <button onClick={() => void refresh()} className="text-xs opacity-70 hover:opacity-100" disabled={loading}>
+          Refresh
+        </button>
+      </div>
+
+      {loading && <div className="text-sm opacity-70">Loading…</div>}
+      {error && <div className="mb-2 text-sm text-red-400">{error}</div>}
+
+      <ul className="space-y-2">
+        {items.map((it) => (
+          <li key={it.id} className="flex items-center justify-between rounded border border-white/10 p-2">
+            <div className="flex items-start gap-2">
+              <span className="text-lg leading-none">{it.emoji}</span>
+              <div>
+                <div className="text-sm font-medium leading-tight">{it.name}</div>
+                <div className="text-xs opacity-70">qty: {it.qty}{it.status && it.status !== 'ok' ? ` · ${it.status}` : ''}</div>
+                <div className="mt-1 text-xs opacity-80 max-w-[36ch]">{it.descr}</div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                className="rounded border border-white/15 px-2 py-1 text-xs"
+                onClick={() => void useItem(it.id, { consume: 1 })}
+                disabled={loading}
+                title="Consume 1"
+              >-1</button>
+              <button
+                className="rounded border border-white/15 px-2 py-1 text-xs"
+                onClick={() => void useItem(it.id, { damage: true })}
+                disabled={loading}
+                title="Mark damage"
+              >damage</button>
+            </div>
+          </li>
+        ))}
+        {items.length === 0 && !loading && <li className="text-sm opacity-70">No items yet.</li>}
+      </ul>
+    </div>
+  );
 }
