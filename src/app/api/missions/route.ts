@@ -5,12 +5,13 @@ import { parseMissionHeader } from "@/lib/missionFormat";
 import { todayLocal } from "@/lib/today";
 import type { MissionRow, MissionDTO } from "@/types/db";
 
+// GET /api/missions
 export async function GET() {
   try {
     const sb = supabaseServer();
     const missionDate = todayLocal();
 
-    // Use filterable builder — no `.returns()` here
+    // Keep builder filterable (no `.returns<T>()` here)
     const { data, error } = await sb
       .from("missions")
       .select("*")
@@ -19,17 +20,20 @@ export async function GET() {
 
     if (error) throw error;
 
-    // Cast results safely
-    const missions: MissionDTO[] = ((data ?? []) as MissionRow[]).map((m) => {
+    const rows = (data ?? []) as MissionRow[];
+
+    const missions: MissionDTO[] = rows.map((m) => {
+      // Your helper: pulls [MissionType] and [Factions] tags out of the text, etc.
       const parsed = parseMissionHeader(m.brief ?? "");
-      const mission_type = m.mission_type ?? parsed.mission_type ?? "Unknown";
+      const mission_type =
+        m.mission_type ?? parsed.mission_type ?? "Unknown";
 
       return {
         id: m.id,
         slot: m.slot,
         title: m.title,
         brief: m.brief,
-        displayBrief: parsed.stripped || m.brief,
+        displayBrief: parsed.stripped || m.brief, // keep your UI-friendly brief if you use it
         objective: m.objective,
         opening: m.opening,
         mission_type,
