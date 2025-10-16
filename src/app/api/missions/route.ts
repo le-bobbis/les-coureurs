@@ -1,7 +1,7 @@
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/db";
+import { supabaseAdmin } from '@/lib/dbAdmin';
 
 export async function GET() {
   // Use UTC "today" to avoid timezone drift
