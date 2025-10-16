@@ -7,7 +7,6 @@ export default function LoginPage() {
   const [mode, setMode] = useState<'login' | 'signup'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [msg, setMsg] = useState<string | null>(null);
 
   async function handleAuth() {
   postMessage('');
@@ -45,7 +44,6 @@ export default function LoginPage() {
       <button onClick={() => setMode(mode === 'login' ? 'signup' : 'login')} className="text-sm underline">
         {mode === 'login' ? 'Create account' : 'Already have an account? Log in'}
       </button>
-      {msg && <p className="text-sm mt-2 text-center">{msg}</p>}
     </div>
   );
 }
