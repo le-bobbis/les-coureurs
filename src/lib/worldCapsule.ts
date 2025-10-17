@@ -22,7 +22,7 @@ World Texture
 Factions & Powers (examples)
 - The Prussian League — disciplined technocrats claiming to “discipline” the Brume; blue-lit affectations. 
 - The English Crown — theocratic monarchy; crusading zeal against “impurity.”
-- The Blessed — ascetics who bell-mark revenants rather than slay them.
+- The Blessed — ascetics who risk their lives to string bells around revenant necks rather than slay them.
 - The Lost Nobles — faded aristocracy funding crater expeditions to find the “Core.”
 - Raiders, scavengers, and revenants are the most common threats. 
 
