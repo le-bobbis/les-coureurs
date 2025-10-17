@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
-import type { TurnDebug } from "@/types";
+import React, { useEffect, useState } from "react";
+import type { TurnDebug, GameState } from "@/types";
 import { useSearchParams } from "next/navigation";
 
 // ---------- Local types (keep client-only; avoid server refactors) ----------
@@ -69,45 +69,93 @@ type GmStartInput = {
 
 type GmTurnInput = GmStartInput & {
   last: { actionText: string | null };
+  // we append sessionId when calling the route
+  sessionId?: string;
 };
 
 type GmOutput = {
   narration: string; // main text
   summary: string[]; // 1-3 bullets
   actionsRemaining: number;
-  debug?: TurnDebug;
+  debug?: TurnDebug; // allow debug from server
 };
+
+// ------------------------- Utility type guards -------------------------
+
+type UnknownRec = Record<string, unknown>;
+const isObject = (v: unknown): v is UnknownRec => typeof v === "object" && v !== null;
+
+const isArrayOfObjects = (v: unknown): v is UnknownRec[] =>
+  Array.isArray(v) && v.every((e) => isObject(e));
+
+function isGmOutput(u: unknown): u is GmOutput {
+  if (!isObject(u)) return false;
+  return (
+    typeof u.narration === "string" &&
+    Array.isArray(u.summary) &&
+    typeof u.actionsRemaining === "number"
+  );
+}
+
+function isApiTurnResponse(u: unknown): u is ApiTurnResponse {
+  if (!isObject(u)) return false;
+  // legacy shape may or may not have ok; treat presence of engine or narrative as a hint
+  const maybeEngine = isObject(u.engine) ? u.engine : undefined;
+  return (
+    typeof u.ok === "boolean" ||
+    typeof u.narrative === "string" ||
+    (maybeEngine !== undefined &&
+      (typeof maybeEngine.actionsRemaining === "number" || isObject(maybeEngine.debug)))
+  );
+}
+
+// allow caching on window without any
+declare global {
+  interface Window {
+    __lastSessionState?: GameState | UnknownRec;
+  }
+}
 
 // ------------------------- Helpers to shape payloads -------------------------
 
-function toGmMission(state: any): GmMission {
-  const mission = (state && typeof state === "object" ? (state as any).mission : null) || {};
-  const missionType: MissionType = (typeof mission.mission_type === "string" &&
-    ["Deliver", "Rescue", "Recover", "Hunt", "Escort", "Unknown"].includes(mission.mission_type))
-    ? (mission.mission_type as MissionType)
-    : "Unknown";
+function toGmMission(state: unknown): GmMission {
+  const st = isObject(state) ? state : {};
+  const mission = isObject(st.mission) ? (st.mission as UnknownRec) : {};
+
+  const rawType = mission.mission_type;
+  const missionType: MissionType =
+    typeof rawType === "string" &&
+    ["Deliver", "Rescue", "Recover", "Hunt", "Escort", "Unknown"].includes(rawType)
+      ? (rawType as MissionType)
+      : "Unknown";
+
+  const title = typeof mission.title === "string" ? mission.title : "Unknown";
+  const brief =
+    typeof mission.brief === "string"
+      ? mission.brief
+      : typeof mission.objective === "string"
+      ? (mission.objective as string)
+      : "";
 
   return {
-    title: typeof mission.title === "string" ? mission.title : "Unknown",
-    brief:
-      typeof mission.brief === "string"
-        ? mission.brief
-        : typeof mission.objective === "string"
-        ? mission.objective
-        : "",
-    objective: typeof mission.objective === "string" ? mission.objective : null,
-    opening: typeof mission.opening === "string" ? mission.opening : null,
-    mission_prompt: typeof mission.mission_prompt === "string" ? mission.mission_prompt : null,
+    title,
+    brief,
+    objective: typeof mission.objective === "string" ? (mission.objective as string) : null,
+    opening: typeof mission.opening === "string" ? (mission.opening as string) : null,
+    mission_prompt: typeof mission.mission_prompt === "string" ? (mission.mission_prompt as string) : null,
     mission_type: missionType,
   };
 }
 
-function toPlayer(state: any) {
-  const invRaw = Array.isArray(state?.inventory) ? state.inventory : [];
-  const inventory = invRaw.map((it: any) => ({
-    name: typeof it?.name === "string" ? it.name : "Item",
-    qty: typeof it?.qty === "number" ? it.qty : 1,
-  }));
+function toPlayer(state: unknown) {
+  const st = isObject(state) ? state : {};
+  const invRaw = Array.isArray(st.inventory) ? (st.inventory as unknown[]) : [];
+  const inventory = invRaw
+    .filter(isObject)
+    .map((it) => ({
+      name: typeof it.name === "string" ? (it.name as string) : "Item",
+      qty: typeof it.qty === "number" ? (it.qty as number) : 1,
+    }));
   return { name: "Runner", inventory };
 }
 
@@ -120,11 +168,9 @@ export default function PlayPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-const searchParams = useSearchParams();
-const sessionId =
-  searchParams.get("s") ||
-  searchParams.get("session") ||
-  searchParams.get("id");
+  const searchParams = useSearchParams();
+  const sessionId =
+    searchParams.get("s") || searchParams.get("session") || searchParams.get("id");
 
   // Load session + prior turns. If brand-new (no turns), get opening via /api/gm/start
   useEffect(() => {
@@ -137,7 +183,7 @@ const sessionId =
 
         // Cache the raw state for GM payloads (client-only convenience)
         if (typeof window !== "undefined") {
-          (window as any).__lastSessionState = (data as any)?.session?.state || {};
+          window.__lastSessionState = (data?.session?.state as GameState | UnknownRec) ?? {};
         }
 
         if (!data?.ok) {
@@ -165,11 +211,11 @@ const sessionId =
           try {
             const gmStartBody: GmStartInput = {
               worldCapsule: "", // server also knows WORLD_CAPSULE
-              mission: toGmMission((data as any)?.session?.state || {}),
+              mission: toGmMission(data.session?.state),
               session: {
                 actionsRemaining: (data.session?.actions_remaining ?? 10) as number,
               },
-              player: toPlayer((data as any)?.session?.state || {}),
+              player: toPlayer(data.session?.state),
             };
 
             const startRes = await fetch("/api/gm/start", {
@@ -177,12 +223,12 @@ const sessionId =
               headers: { "content-type": "application/json" },
               body: JSON.stringify(gmStartBody),
             });
-            const startJson: any = await startRes.json().catch(() => ({}));
-            if (startRes.ok && startJson?.narration) {
-              setLog((prev) => [...prev, { role: "gm", text: startJson.narration }]);
+            const startRaw: unknown = await startRes.json().catch(() => ({} as unknown));
+            if (startRes.ok && isGmOutput(startRaw)) {
+              setLog((prev) => [...prev, { role: "gm", text: startRaw.narration }]);
               setActions(
-                typeof startJson.actionsRemaining === "number"
-                  ? startJson.actionsRemaining
+                typeof startRaw.actionsRemaining === "number"
+                  ? startRaw.actionsRemaining
                   : data.session?.actions_remaining ?? null
               );
             }
@@ -210,44 +256,55 @@ const sessionId =
     setLoading(true);
 
     try {
+      const lastState = typeof window !== "undefined" ? window.__lastSessionState : {};
       const res = await fetch("/api/gm/turn", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           worldCapsule: "",
-          mission: toGmMission((window as any).__lastSessionState || {}),
+          mission: toGmMission(lastState),
           session: { actionsRemaining: actions ?? 10 },
-          player: toPlayer((window as any).__lastSessionState || {}),
+          player: toPlayer(lastState),
           last: { actionText: action },
-          sessionId, 
-        } as GmTurnInput),
+          sessionId,
+        } satisfies GmTurnInput),
       });
 
-      const raw: any = await res.json().catch(() => ({}));
+      const rawUnknown: unknown = await res.json().catch(() => ({} as unknown));
       // Accept either legacy { ok, narrative, engine } or GM { narration, actionsRemaining }
-      if (!res.ok && !raw?.narration) {
-        const msg = raw?.error || `HTTP ${res.status}`;
+      if (!res.ok && !isGmOutput(rawUnknown)) {
+        const msg =
+          (isObject(rawUnknown) && typeof rawUnknown.error === "string"
+            ? rawUnknown.error
+            : undefined) || `HTTP ${res.status}`;
         setError(msg);
         setLog((prev) => [...prev, { role: "gm", text: `⛔ ${msg}` }]);
         return;
       }
 
-      if (raw?.narration) {
-        const gmOut = raw as GmOutput;
+      if (isGmOutput(rawUnknown)) {
+        const gmOut = rawUnknown;
         setActions(gmOut.actionsRemaining);
         setLog((prev) => [
-        ...prev,
-        { role: "gm", text: gmOut.narration, debug: gmOut.debug }  // 👈 include debug
+          ...prev,
+          { role: "gm", text: gmOut.narration, debug: gmOut.debug },
         ]);
-      } else {
-        const data = raw as ApiTurnResponse;
+      } else if (isApiTurnResponse(rawUnknown)) {
+        const data = rawUnknown;
         setLog((prev) => [
           ...prev,
-          { role: "gm", text: data.narrative ?? "⚠ No narrative returned", debug: data.engine?.debug },
+          {
+            role: "gm",
+            text: data.narrative ?? "⚠ No narrative returned",
+            debug: data.engine?.debug,
+          },
         ]);
         if (typeof data.engine?.actionsRemaining === "number") {
           setActions(data.engine.actionsRemaining);
         }
+      } else {
+        // Unknown shape
+        setLog((prev) => [...prev, { role: "gm", text: "⚠ Unexpected response shape" }]);
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
