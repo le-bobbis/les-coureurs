@@ -2,7 +2,31 @@
 "use client";
 
 import { useState } from "react";
+import type { ZodIssue } from "zod";
 import { WORLD_CAPSULE } from "@/lib/worldCapsule";
+
+type SeededRow = { slot: number; title: string; mission_type: string };
+type ApiSuccess = { date: string; seeded: SeededRow[] };
+type ApiError = { error: string; issues?: ZodIssue[] };
+
+function isApiError(x: unknown): x is ApiError {
+  return (
+    typeof x === "object" &&
+    x !== null &&
+    "error" in x &&
+    typeof (x as { error: unknown }).error === "string"
+  );
+}
+
+function isApiSuccess(x: unknown): x is ApiSuccess {
+  return (
+    typeof x === "object" &&
+    x !== null &&
+    "date" in x &&
+    "seeded" in x &&
+    Array.isArray((x as { seeded: unknown }).seeded)
+  );
+}
 
 export default function SeedPage() {
   const [date, setDate] = useState<string>(new Date().toISOString().slice(0, 10));
@@ -25,19 +49,16 @@ export default function SeedPage() {
       const raw = await res.text(); // read raw first so we can show HTML errors too
 
       if (!res.ok) {
-        // Try to extract JSON issues if present
         try {
-          const data = JSON.parse(raw);
-          if (data?.issues) {
-            setLog(
-              `❌ Failed schema validation.\nIssues:\n` +
-                data.issues
-                  .map((i: any) => `- ${Array.isArray(i.path) ? i.path.join(".") : ""}: ${i.message}`)
-                  .join("\n")
-            );
+          const data: unknown = JSON.parse(raw);
+          if (isApiError(data) && data.issues) {
+            const issueLines = data.issues
+              .map((i) => `- ${Array.isArray(i.path) ? i.path.join(".") : ""}: ${i.message}`)
+              .join("\n");
+            setLog(`❌ Failed schema validation.\nIssues:\n${issueLines}`);
             return;
           }
-          setLog(`❌ HTTP ${res.status} ${res.statusText}\n${typeof data === "object" ? JSON.stringify(data, null, 2) : raw.slice(0, 1500)}`);
+          setLog(`❌ HTTP ${res.status} ${res.statusText}\n${raw.slice(0, 1500)}`);
           return;
         } catch {
           setLog(`❌ HTTP ${res.status} ${res.statusText}\n${raw.slice(0, 1500)}`);
@@ -50,26 +71,32 @@ export default function SeedPage() {
         return;
       }
 
-      const data = JSON.parse(raw);
-      if (data?.issues) {
-        setLog(
-          `❌ Failed schema validation.\nIssues:\n` +
-            data.issues
-              .map((i: any) => `- ${Array.isArray(i.path) ? i.path.join(".") : ""}: ${i.message}`)
-              .join("\n")
-        );
+      const data: unknown = JSON.parse(raw);
+
+      if (isApiError(data) && data.issues) {
+        const issueLines = data.issues
+          .map((i) => `- ${Array.isArray(i.path) ? i.path.join(".") : ""}: ${i.message}`)
+          .join("\n");
+        setLog(`❌ Failed schema validation.\nIssues:\n${issueLines}`);
+        return;
+      }
+
+      if (!isApiSuccess(data)) {
+        setLog(`❌ Unexpected response shape:\n${raw.slice(0, 1500)}`);
         return;
       }
 
       const lines =
-        (data?.seeded ?? [])
-          .sort((a: any, b: any) => a.slot - b.slot)
-          .map((m: any) => `[${m.slot}] ${m.title} (${m.mission_type})`)
+        data.seeded
+          .slice()
+          .sort((a, b) => a.slot - b.slot)
+          .map((m) => `[${m.slot}] ${m.title} (${m.mission_type})`)
           .join("\n") || "No rows returned?";
 
-      setLog(`✅ Seeded ${data?.seeded?.length ?? 0} missions for ${data.date}.\n— Slots:\n${lines}`);
-    } catch (e: any) {
-      setLog(`❌ ${e?.message ?? "Network error"}`);
+      setLog(`✅ Seeded ${data.seeded.length} missions for ${data.date}.\n— Slots:\n${lines}`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Network error";
+      setLog(`❌ ${msg}`);
     } finally {
       setBusy(false);
     }
@@ -79,7 +106,9 @@ export default function SeedPage() {
     <main className="mx-auto max-w-3xl p-6 space-y-6">
       <header className="space-y-1">
         <h1 className="text-2xl font-semibold">Seed Daily Missions</h1>
-        <p className="text-sm text-neutral-500">Generate three shared missions for a UTC date and upsert them into the database.</p>
+        <p className="text-sm text-neutral-500">
+          Generate three shared missions for a UTC date and upsert them into the database.
+        </p>
       </header>
 
       <div className="grid gap-4">

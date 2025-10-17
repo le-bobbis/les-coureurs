@@ -10,6 +10,8 @@ export const MissionTypeEnum = z.enum([
   "Unknown",
 ]);
 
+export type MissionType = z.infer<typeof MissionTypeEnum>;
+
 // ---------- helpers ----------
 const isStr = (v: unknown): v is string => typeof v === "string";
 
