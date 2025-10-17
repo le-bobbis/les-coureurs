@@ -12,52 +12,158 @@ import {
   type GmTurnOutput,
 } from "@/lib/gmSchemas";
 
+import { supabaseAdmin } from "@/lib/dbAdmin";
+import { resolveTurn } from "@/lib/rules";
+import type { GameState, Stats, EngineOutput } from "@/types";
+
 const MODEL = "gpt-4o-mini";
 const WORD_BUDGET = 150;
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+function jsonError(message: string, status = 500) {
+  return NextResponse.json({ error: message }, { status });
+}
 
-export async function GET() {
-  return NextResponse.json({ ok: true, route: "gm/turn", now: new Date().toISOString() });
+// Narrow unknown JSON to your GameState shape (matches your /api/turn helper)
+function toGameState(val: unknown): GameState {
+  const raw = (val && typeof val === "object" ? (val as Record<string, unknown>) : {}) || {};
+  const env = (raw.env && typeof raw.env === "object" ? (raw.env as Record<string, unknown>) : {}) || {};
+  const mission = (raw.mission && typeof raw.mission === "object" ? (raw.mission as Record<string, unknown>) : {}) || {};
+
+  const invRaw = Array.isArray(raw.inventory) ? raw.inventory : [];
+  const inventory = invRaw.map((it) => {
+    const o = (it && typeof it === "object" ? (it as Record<string, unknown>) : {}) || {};
+    return {
+      id: typeof o.id === "string" ? o.id : undefined,
+      name: typeof o.name === "string" ? o.name : "",
+      emoji: typeof o.emoji === "string" ? o.emoji : undefined,
+      status: typeof o.status === "string" ? o.status : undefined,
+      qty: typeof o.qty === "number" ? o.qty : undefined,
+    };
+  });
+
+  return {
+    env: {
+      light:
+        env.light === "dark" || env.light === "dim" || env.light === "normal"
+          ? (env.light as "dark" | "dim" | "normal")
+          : undefined,
+      weather:
+        env.weather === "rain" || env.weather === "clear"
+          ? (env.weather as "rain" | "clear")
+          : undefined,
+      terrain:
+        env.terrain === "mud" || env.terrain === "rock" || env.terrain === "road"
+          ? (env.terrain as "mud" | "rock" | "road")
+          : undefined,
+    },
+    range: raw.range === "long" || raw.range === "close" ? (raw.range as "long" | "close") : undefined,
+    inventory,
+    mission: {
+      title: typeof mission.title === "string" ? mission.title : "Unknown",
+      objective: typeof mission.objective === "string" ? mission.objective : "",
+      mission_prompt: typeof mission.mission_prompt === "string" ? mission.mission_prompt : "",
+    },
+    flags: Array.isArray(raw.flags) ? raw.flags.filter((f): f is string => typeof f === "string") : [],
+  };
 }
 
 export async function POST(req: Request) {
-  if (!process.env.OPENAI_API_KEY) {
-    return NextResponse.json({ error: "OPENAI_API_KEY not set" }, { status: 500 });
-  }
   try {
-    const body = await req.json();
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+
+    // Validate GM input (worldCapsule/mission/session/player/last)
+    const body = (await req.json().catch(() => ({}))) as unknown;
     const parsed = GmTurnInputSchema.safeParse(body);
     if (!parsed.success) {
-      return NextResponse.json({ error: "Invalid GM input", issues: parsed.error.issues }, { status: 400 });
+      return NextResponse.json({ error: "Invalid input", issues: parsed.error.issues }, { status: 400 });
     }
-    const input: GmTurnInput = parsed.data;
+    const input = parsed.data as GmTurnInput;
 
-    // decrement for a taken turn (server-authoritative)
-    const displayedActions = Math.max(0, input.session.actionsRemaining - 1);
+    // We also require a sessionId (sent by the client page)
+    const sessionId =
+      typeof (body as Record<string, unknown>)?.["sessionId"] === "string"
+        ? ((body as Record<string, unknown>)["sessionId"] as string)
+        : undefined;
+    if (!sessionId) return jsonError("Missing sessionId in body", 400);
+    if (!input.last?.actionText) return jsonError("Missing last.actionText (player action)", 400);
 
+    // --- Load session (need user_id to pull profile stats) ---
+    const { data: session, error: sErr } = await supabaseAdmin
+      .from("sessions")
+      .select("id, user_id, actions_remaining, state, created_at")
+      .eq("id", sessionId)
+      .single();
+
+    if (sErr || !session) {
+      return jsonError(sErr?.message || "Session not found", 404);
+    }
+
+    // --- Determine next turn index (opening may or may not exist yet) ---
+    const { data: prevTurns, error: tErr } = await supabaseAdmin
+      .from("turns")
+      .select("idx, summary")
+      .eq("session_id", sessionId)
+      .order("idx", { ascending: true });
+
+    if (tErr) return jsonError(tErr.message, 500);
+    const maxIdx = (prevTurns ?? []).reduce((m, t) => (t.idx > m ? t.idx : m), -1);
+    const turnIndex = maxIdx + 1;
+
+    // --- Prepare GameState and actionsRemaining baseline ---
+    const state = toGameState(session.state);
+    const actionsRemainingBefore = (session.actions_remaining ?? input.session.actionsRemaining ?? 10) as number;
+
+    // --- Load Stats from profiles.stats (JSONB), merge onto defaults ---
+    const BASE_STATS: Stats = { STR: 5, PER: 5, PRC: 5, VIT: 5, INT: 5, CHA: 5, MEN: 5, RFX: 5, LCK: 5 };
+    const { data: profile, error: pErr } = await supabaseAdmin
+      .from("profiles")
+      .select("stats")
+      .eq("id", session.user_id) // profiles.id is PK per your schema
+      .single();
+
+    if (pErr) {
+      // Proceed with defaults; log for observability
+      console.warn("[gm/turn] profile stats load error:", pErr);
+    }
+
+    const rawStats = (profile?.stats ?? {}) as Partial<Record<keyof Stats, unknown>>;
+    const stats: Stats = {
+      STR: Number(rawStats.STR ?? BASE_STATS.STR),
+      PER: Number(rawStats.PER ?? BASE_STATS.PER),
+      PRC: Number(rawStats.PRC ?? BASE_STATS.PRC),
+      VIT: Number(rawStats.VIT ?? BASE_STATS.VIT),
+      INT: Number(rawStats.INT ?? BASE_STATS.INT),
+      CHA: Number(rawStats.CHA ?? BASE_STATS.CHA),
+      MEN: Number(rawStats.MEN ?? BASE_STATS.MEN),
+      RFX: Number(rawStats.RFX ?? BASE_STATS.RFX),
+      LCK: Number(rawStats.LCK ?? BASE_STATS.LCK),
+    };
+
+    // --- Run deterministic rules engine ---
+    const engine: EngineOutput = resolveTurn({
+      sessionId,
+      turnIndex,
+      playerInput: input.last.actionText,
+      stats,
+      state,
+      actionsRemaining: actionsRemainingBefore,
+    });
+
+    // Prepare short history summary for the GM (last 2 summaries)
+    const last2Summaries = (prevTurns ?? [])
+      .slice(-2)
+      .flatMap((t) => (Array.isArray(t.summary) ? t.summary : []));
+    const historySummary = last2Summaries.slice(-3).join(" • ");
+
+    // --- Build the GM prompt using engine outcome ---
     const system = `
-You are the Game Master for LES COUREURS — a grounded, lethal world.
-Honor the World Capsule and the mission seed. Reply in JSON only.
-`.trim();
+You are the Game Master for "Les Coureurs", a survival-horror RPG in an alternate early-19th-century Europe.
 
-    const rails = `
-FORMAT
-- Return strictly JSON: { "narration": string, "summary": string[], "actionsRemaining": number }.
-- Narration ≤ ${WORD_BUDGET} words, present tense, concrete and restrained.
-- Summary: 1–3 bullet strings; each must be a fact explicitly stated in the narration (no new info).
-- actionsRemaining: return exactly ${displayedActions}.
-
-AGENCY & CHALLENGE
-- Your goal is to challenge the player by introducing obstacles and dilemmas every turn. This is a dangerous world. Every mission courts death.
-- Punish mistakes (costs, wounds, delays); reward cleverness and resourcefulness (position, time, openings).
-- NEVER take actions or make decisions on behalf of the player. Do not add intent they did not state.
-- As turns elapse or the player nears the objective, escalate danger and pressure credibly.
-
-TURN RESOLUTION
-- Resolve ONLY the player's stated action. Apply immediate, realistic consequences.
-- Use mission.mission_prompt to keep terrain, faction motives, resource pressures, and a complication trigger coherent.
-- Advance clocks/pressures when warranted. No suggested options in this response.
+Follow these rules:
+- Do not decide for the player; never write their actions.
+- Keep it tense and grounded; consequence-forward.
+- 2nd person present-tense; ≤ ${WORD_BUDGET} words.
+- Conclude with a strong beat that poses an immediate dilemma or opening.
 `.trim();
 
     const user = `
@@ -74,21 +180,24 @@ GM guidance:
 ${input.mission.mission_prompt ?? "—"}
 
 SESSION
-actionsRemaining: ${input.session.actionsRemaining}
-pressures: ${(input.session.pressures ?? []).join(", ") || "—"}
-flags: ${JSON.stringify(input.session.flags ?? {})}
-clocks: ${JSON.stringify(input.session.clocks ?? [])}
-
-PLAYER
-name: ${input.player.name}
-inventory: ${JSON.stringify(input.player.inventory)}
-conditions: ${JSON.stringify(input.player.conditions ?? [])}
+actionsRemaining (before): ${actionsRemainingBefore}
 
 PLAYER ACTION
-${input.last.actionText ?? "(missing) — if null, treat as no action taken and escalate consequence minimally."}
+"${input.last.actionText}"
 
-Return JSON only:
-{ "narration": string, "summary": string[], "actionsRemaining": number }
+ENGINE OUTCOME (deterministic rules)
+- outcomeSummary: ${engine.outcomeSummary}
+- injury: ${engine.worldDelta.injury ?? "none"}
+- itemsUsed: ${((engine.debug.itemsUsed ?? []).map((i) => i.name).join(", ")) || "—"}
+- flags: ${(engine.worldDelta.flags ?? []).join(", ") || "—"}
+- inventoryChanges: ${JSON.stringify(engine.worldDelta.inventoryChanges ?? [])}
+- actionsRemaining (after): ${engine.actionsRemaining}
+
+HISTORY (last)
+${historySummary || "—"}
+
+OUTPUT JSON SHAPE
+{ "narration": string (<= ${WORD_BUDGET} words), "summary": string[1..3], "actionsRemaining": number }
 `.trim();
 
     const completion = await openai.chat.completions.create({
@@ -97,26 +206,65 @@ Return JSON only:
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: system },
-        { role: "system", content: rails },
         { role: "user", content: user },
       ],
     });
 
-    const raw = completion.choices[0]?.message?.content ?? "{}";
+    const rawOut = completion.choices[0]?.message?.content ?? "{}";
     let outUnknown: unknown;
     try {
-      outUnknown = JSON.parse(raw);
+      outUnknown = JSON.parse(rawOut);
     } catch {
-      return NextResponse.json({ error: "GM returned non-JSON output" }, { status: 502 });
+      outUnknown = {};
     }
 
-    const safe = GmTurnOutputSchema.safeParse(outUnknown);
-    if (!safe.success) {
-      return NextResponse.json({ error: "GM output failed schema validation", issues: safe.error.issues }, { status: 422 });
+    const checked = GmTurnOutputSchema.safeParse(outUnknown);
+    if (!checked.success) {
+      return NextResponse.json(
+        { error: "GM output failed schema validation", issues: checked.error.issues },
+        { status: 422 }
+      );
     }
 
-    // fix the count to what we told it to output
-    const out: GmTurnOutput = { ...safe.data, actionsRemaining: displayedActions };
+    // --- Persist the turn ---
+    const narration = checked.data.narration;
+    const summary = [
+      engine.outcomeSummary,
+      `Action: ${input.last.actionText}`,
+      engine.worldDelta.injury ? `Injury: ${engine.worldDelta.injury}` : "No injury",
+    ];
+
+    const insertRow = {
+      session_id: sessionId,
+      idx: turnIndex,
+      player_input: input.last.actionText,
+      narrative: narration,
+      summary,
+      debug: engine.debug, // keep dev panel data
+    };
+    const { error: insErr } = await supabaseAdmin.from("turns").insert([insertRow]);
+    if (insErr) {
+      console.error("[gm/turn] insert failed:", insErr);
+      return jsonError(insErr.message, 500);
+    }
+
+    // --- Update actions remaining on the session ---
+    const { error: updErr } = await supabaseAdmin
+      .from("sessions")
+      .update({ actions_remaining: engine.actionsRemaining })
+      .eq("id", sessionId);
+    if (updErr) {
+      console.error("[gm/turn] session update failed:", updErr);
+      return jsonError(updErr.message, 500);
+    }
+
+    // --- Return GM output + debug to the client ---
+    const out: GmTurnOutput & { debug: EngineOutput["debug"] } = {
+      ...checked.data,
+      actionsRemaining: engine.actionsRemaining, // ensure consistency with engine
+      debug: engine.debug,
+    };
+
     return NextResponse.json(out, { status: 200 });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Unknown error";

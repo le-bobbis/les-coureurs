@@ -45,15 +45,10 @@ FORMAT
 - Summary: 1–3 bullet strings; each must be a fact explicitly stated in the narration (no new info).
 - actionsRemaining: return exactly ${input.session.actionsRemaining}.
 
-AGENCY & CHALLENGE
-- Your goal is to challenge the player by introducing obstacles and dilemmas every turn. This is a dangerous world. Every mission courts death.
-- Punish mistakes (costs, wounds, delays); reward cleverness and resourcefulness (position, time, openings).
-- NEVER take actions or make decisions on behalf of the player. Do not add intent they did not state.
-- As turns elapse or the player nears the objective, escalate danger and pressure credibly.
-
 OPENING
 - Use mission.opening if provided to stage the first scene (tighten/clarify but do not contradict).
 - Integrate mission.mission_prompt for terrain, motive, resource pressure, and a complication trigger.
+- Your goal is to set the scene, establish the danger/stakes, and create excitement for the adventure ahead.
 - Do NOT present choices in this response.
 `.trim();
 
@@ -82,7 +77,7 @@ inventory: ${JSON.stringify(input.player.inventory)}
 conditions: ${JSON.stringify(input.player.conditions ?? [])}
 
 TASK
-Start the scene. One beat of change. Do not suggest options.
+Start the scene. Establish objective, danger, and a sense of adventure. Do not suggest options.
 Return JSON only:
 { "narration": string, "summary": string[], "actionsRemaining": number }
 `.trim();
