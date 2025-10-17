@@ -188,11 +188,16 @@ Rules (must follow exactly):
 - Avoid modern slang or anachronistic tech; keep prose concrete and restrained.
 - No line breaks inside title/brief/objective. Line breaks allowed in mission_prompt/opening.
 
+Tone:
+- When invoking places, invent specific, believable locales for a post-apocalyptic 19th century France (and surrounding lands)
+- When crafting objectives, make them specific, unique, and memorable.
+- ALways consider why this mission matters to the people who would be giving it to the player.
+
 For each mission, return these fields:
 - slot: 1|2|3
 - title (≤80): a short, evocative hook a player sees.
 - brief (≤240): the player-facing setup; specify place, pressure, and a dilemma or timer.
-- objective (≤240, optional): the simplest clear success condition in-world terms.
+- objective (≤240, optional): the simplest clear success condition in-world terms. Should be specific within world constraints and memorable.
 - opening (≤600, optional): how the first scene starts; create a sense of place, urgency, and set the player off on their adventure.
 - mission_prompt (≤800, optional): GM guidance with 3–6 tight bullets:
     • Location details (terrain, weather, visibility)
@@ -201,7 +206,7 @@ For each mission, return these fields:
     • One complication that can escalate (clock or trigger)
     • A non-combat way through (barter, stealth, omen)
     • A consequence for failure (material/human)
-- mission_type: one of Deliver | Rescue | Recover | Hunt | Escort | Unknown
+- mission_type: one of Deliver (a resource, person, object, or other) | Rescue (a living person) | Recover (a body, object, resource, or other) | Hunt (a unique revenant target) | Escort (a living person for a specific purpose) | Unknown (such as happening upon a unique instance in the wild)
 Date to generate for: ${date}
 
 Return ONLY JSON. No markdown, no commentary.

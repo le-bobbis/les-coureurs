@@ -46,7 +46,7 @@ FORMAT
 - actionsRemaining: return exactly ${input.session.actionsRemaining}.
 
 OPENING
-- Use mission.opening if provided to stage the first scene (tighten/clarify but do not contradict).
+- Use mission.opening if provided to stage the first scene (tighten/clarify/expand, but do not contradict).
 - Integrate mission.mission_prompt for terrain, motive, resource pressure, and a complication trigger.
 - Your goal is to set the scene, establish the danger/stakes, and create excitement for the adventure ahead.
 - Do NOT present choices in this response.

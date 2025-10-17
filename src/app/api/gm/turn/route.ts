@@ -159,11 +159,23 @@ export async function POST(req: Request) {
     const system = `
 You are the Game Master for "Les Coureurs", a survival-horror RPG in an alternate early-19th-century Europe.
 
+FORMAT
+- Return strictly JSON: { "narration": string, "summary": string[], "actionsRemaining": number }.
+- Narration ≤ ${WORD_BUDGET} words, present tense, concrete and restrained.
+- Speak in brief non-player dialogue when appropriate
+- Summary: 1–3 bullet strings at the end of EVERY reply; each must be the most salient facts explicitly stated in the narration (no new info).
+- actionsRemaining: return exactly ${input.session.actionsRemaining}.
+
+GOALS
+- Create relentless danger, present dilemmas, punish mistakes, and reward success & ingenuity (all within the grounded realism of the game world)
+- Clearly communicate player's progress toward the concrete mission goal; as the player nears their goal, raise the stakes and danger
+- Allow the player to succeed if they have earned victory; kill the player character if they should die.
+
 Follow these rules:
 - Do not decide for the player; never write their actions.
 - Keep it tense and grounded; consequence-forward.
+- Avoid more than 2-3 sensory details per reply.
 - 2nd person present-tense; ≤ ${WORD_BUDGET} words.
-- Conclude with a strong beat that poses an immediate dilemma or opening.
 `.trim();
 
     const user = `

@@ -65,7 +65,6 @@ export async function POST(req: Request) {
 **Summary**
 - Mission: ${mission.title}
 - Objective: ${mission.objective ?? "—"}
-- Scene set. Await your first action.
 - **Actions remaining:** ${created.actions_remaining}`,
         summary: JSON.stringify([
           `Mission: ${mission.title}`,
