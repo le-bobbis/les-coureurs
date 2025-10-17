@@ -1,8 +1,10 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { Suspense, useEffect, useState } from "react";
 import type { TurnDebug, GameState } from "@/types";
 import { useSearchParams } from "next/navigation";
+
+export const dynamic = "force-dynamic"; // avoid prerender; page depends on runtime search params
 
 // ---------- Local types (keep client-only; avoid server refactors) ----------
 
@@ -69,7 +71,6 @@ type GmStartInput = {
 
 type GmTurnInput = GmStartInput & {
   last: { actionText: string | null };
-  // we append sessionId when calling the route
   sessionId?: string;
 };
 
@@ -85,9 +86,6 @@ type GmOutput = {
 type UnknownRec = Record<string, unknown>;
 const isObject = (v: unknown): v is UnknownRec => typeof v === "object" && v !== null;
 
-const isArrayOfObjects = (v: unknown): v is UnknownRec[] =>
-  Array.isArray(v) && v.every((e) => isObject(e));
-
 function isGmOutput(u: unknown): u is GmOutput {
   if (!isObject(u)) return false;
   return (
@@ -99,11 +97,10 @@ function isGmOutput(u: unknown): u is GmOutput {
 
 function isApiTurnResponse(u: unknown): u is ApiTurnResponse {
   if (!isObject(u)) return false;
-  // legacy shape may or may not have ok; treat presence of engine or narrative as a hint
-  const maybeEngine = isObject(u.engine) ? u.engine : undefined;
+  const maybeEngine = isObject((u as UnknownRec).engine) ? ((u as UnknownRec).engine as UnknownRec) : undefined;
   return (
-    typeof u.ok === "boolean" ||
-    typeof u.narrative === "string" ||
+    typeof (u as UnknownRec).ok === "boolean" ||
+    typeof (u as UnknownRec).narrative === "string" ||
     (maybeEngine !== undefined &&
       (typeof maybeEngine.actionsRemaining === "number" || isObject(maybeEngine.debug)))
   );
@@ -159,9 +156,20 @@ function toPlayer(state: unknown) {
   return { name: "Runner", inventory };
 }
 
-// --------------------------------- UI ---------------------------------------
+// --------------------------------- Suspense wrapper ---------------------------------------
 
+// Outer wrapper to satisfy Next 15 requirement for useSearchParams()
 export default function PlayPage() {
+  return (
+    <Suspense fallback={<div className="p-4 text-white">Loading…</div>}>
+      <PlayPageInner />
+    </Suspense>
+  );
+}
+
+// --------------------------------- UI (inner) ---------------------------------------
+
+function PlayPageInner() {
   const [log, setLog] = useState<TurnLog[]>([]);
   const [input, setInput] = useState("");
   const [actions, setActions] = useState<number | null>(null);
@@ -274,8 +282,8 @@ export default function PlayPage() {
       // Accept either legacy { ok, narrative, engine } or GM { narration, actionsRemaining }
       if (!res.ok && !isGmOutput(rawUnknown)) {
         const msg =
-          (isObject(rawUnknown) && typeof rawUnknown.error === "string"
-            ? rawUnknown.error
+          (isObject(rawUnknown) && typeof (rawUnknown as UnknownRec).error === "string"
+            ? ((rawUnknown as UnknownRec).error as string)
             : undefined) || `HTTP ${res.status}`;
         setError(msg);
         setLog((prev) => [...prev, { role: "gm", text: `⛔ ${msg}` }]);
