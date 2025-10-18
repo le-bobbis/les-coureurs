@@ -14,57 +14,14 @@ import {
 
 import { supabaseAdmin } from "@/lib/dbAdmin";
 import { resolveTurn } from "@/lib/rules";
-import type { GameState, Stats, EngineOutput } from "@/types";
+import type { Stats, EngineOutput } from "@/types";
+import { applyWorldDelta, normalizeGameState } from "@/lib/gameState";
+import { GM_WORD_BUDGET, SYSTEM_GM, TURN_RAILS, buildUserPrompt } from "@/lib/prompts";
 
 const MODEL = "gpt-4o-mini";
-const WORD_BUDGET = 150;
 
 function jsonError(message: string, status = 500) {
   return NextResponse.json({ error: message }, { status });
-}
-
-// Narrow unknown JSON to your GameState shape (matches your /api/turn helper)
-function toGameState(val: unknown): GameState {
-  const raw = (val && typeof val === "object" ? (val as Record<string, unknown>) : {}) || {};
-  const env = (raw.env && typeof raw.env === "object" ? (raw.env as Record<string, unknown>) : {}) || {};
-  const mission = (raw.mission && typeof raw.mission === "object" ? (raw.mission as Record<string, unknown>) : {}) || {};
-
-  const invRaw = Array.isArray(raw.inventory) ? raw.inventory : [];
-  const inventory = invRaw.map((it) => {
-    const o = (it && typeof it === "object" ? (it as Record<string, unknown>) : {}) || {};
-    return {
-      id: typeof o.id === "string" ? o.id : undefined,
-      name: typeof o.name === "string" ? o.name : "",
-      emoji: typeof o.emoji === "string" ? o.emoji : undefined,
-      status: typeof o.status === "string" ? o.status : undefined,
-      qty: typeof o.qty === "number" ? o.qty : undefined,
-    };
-  });
-
-  return {
-    env: {
-      light:
-        env.light === "dark" || env.light === "dim" || env.light === "normal"
-          ? (env.light as "dark" | "dim" | "normal")
-          : undefined,
-      weather:
-        env.weather === "rain" || env.weather === "clear"
-          ? (env.weather as "rain" | "clear")
-          : undefined,
-      terrain:
-        env.terrain === "mud" || env.terrain === "rock" || env.terrain === "road"
-          ? (env.terrain as "mud" | "rock" | "road")
-          : undefined,
-    },
-    range: raw.range === "long" || raw.range === "close" ? (raw.range as "long" | "close") : undefined,
-    inventory,
-    mission: {
-      title: typeof mission.title === "string" ? mission.title : "Unknown",
-      objective: typeof mission.objective === "string" ? mission.objective : "",
-      mission_prompt: typeof mission.mission_prompt === "string" ? mission.mission_prompt : "",
-    },
-    flags: Array.isArray(raw.flags) ? raw.flags.filter((f): f is string => typeof f === "string") : [],
-  };
 }
 
 export async function POST(req: Request) {
@@ -110,8 +67,11 @@ export async function POST(req: Request) {
     const turnIndex = maxIdx + 1;
 
     // --- Prepare GameState and actionsRemaining baseline ---
-    const state = toGameState(session.state);
-    const actionsRemainingBefore = (session.actions_remaining ?? input.session.actionsRemaining ?? 10) as number;
+    const state = normalizeGameState(session.state);
+    const actionsRemainingBefore =
+      typeof session.actions_remaining === "number"
+        ? session.actions_remaining
+        : input.session.actionsRemaining ?? 10;
 
     // --- Load Stats from profiles.stats (JSONB), merge onto defaults ---
     const BASE_STATS: Stats = { STR: 5, PER: 5, PRC: 5, VIT: 5, INT: 5, CHA: 5, MEN: 5, RFX: 5, LCK: 5 };
@@ -149,68 +109,32 @@ export async function POST(req: Request) {
       actionsRemaining: actionsRemainingBefore,
     });
 
+    const nextState = applyWorldDelta(state, engine.worldDelta);
+
     // Prepare short history summary for the GM (last 2 summaries)
     const last2Summaries = (prevTurns ?? [])
       .slice(-2)
       .flatMap((t) => (Array.isArray(t.summary) ? t.summary : []));
-    const historySummary = last2Summaries.slice(-3).join(" • ");
+    const historySummary = last2Summaries
+      .slice(-3)
+      .filter((line): line is string => typeof line === "string");
 
     // --- Build the GM prompt using engine outcome ---
-    const system = `
-You are the Game Master for "Les Coureurs", a survival-horror RPG in an alternate early-19th-century Europe.
-
-FORMAT
-- Return strictly JSON: { "narration": string, "summary": string[], "actionsRemaining": number }.
-- Narration ≤ ${WORD_BUDGET} words, present tense, concrete and restrained.
-- Speak in brief non-player dialogue when appropriate
-- Summary: 1–3 bullet strings at the end of EVERY reply; each must be the most salient facts explicitly stated in the narration (no new info).
-- actionsRemaining: return exactly ${input.session.actionsRemaining}.
-
-GOALS
-- Create relentless danger, present dilemmas, punish mistakes, and reward success & ingenuity (all within the grounded realism of the game world)
-- Clearly communicate player's progress toward the concrete mission goal; as the player nears their goal, raise the stakes and danger
-- Allow the player to succeed if they have earned victory; kill the player character if they should die.
-
-Follow these rules:
-- Do not decide for the player; never write their actions.
-- Keep it tense and grounded; consequence-forward.
-- Avoid more than 2-3 sensory details per reply.
-- 2nd person present-tense; ≤ ${WORD_BUDGET} words.
-`.trim();
-
-    const user = `
-WORLD CAPSULE
-${(input.worldCapsule || WORLD_CAPSULE).trim()}
-
-MISSION
-title: ${input.mission.title}
-brief: ${input.mission.brief}
-objective: ${input.mission.objective ?? "—"}
-opening: ${input.mission.opening ?? "—"}
-mission_type: ${input.mission.mission_type}
-GM guidance:
-${input.mission.mission_prompt ?? "—"}
-
-SESSION
-actionsRemaining (before): ${actionsRemainingBefore}
-
-PLAYER ACTION
-"${input.last.actionText}"
-
-ENGINE OUTCOME (deterministic rules)
-- outcomeSummary: ${engine.outcomeSummary}
-- injury: ${engine.worldDelta.injury ?? "none"}
-- itemsUsed: ${((engine.debug.itemsUsed ?? []).map((i) => i.name).join(", ")) || "—"}
-- flags: ${(engine.worldDelta.flags ?? []).join(", ") || "—"}
-- inventoryChanges: ${JSON.stringify(engine.worldDelta.inventoryChanges ?? [])}
-- actionsRemaining (after): ${engine.actionsRemaining}
-
-HISTORY (last)
-${historySummary || "—"}
-
-OUTPUT JSON SHAPE
-{ "narration": string (<= ${WORD_BUDGET} words), "summary": string[1..3], "actionsRemaining": number }
-`.trim();
+    const system = SYSTEM_GM;
+    const rails = TURN_RAILS(engine.actionsRemaining, GM_WORD_BUDGET);
+    const user = buildUserPrompt({
+      worldCapsule: input.worldCapsule?.trim().length ? input.worldCapsule : WORLD_CAPSULE,
+      mission: {
+        title: input.mission.title,
+        objective: input.mission.objective,
+        prompt: input.mission.mission_prompt,
+      },
+      playerInput: input.last.actionText,
+      engine,
+      historySummary,
+      preTurnActionsRemaining: actionsRemainingBefore,
+      sessionFlags: nextState.flags,
+    });
 
     const completion = await openai.chat.completions.create({
       model: MODEL,
@@ -218,6 +142,7 @@ OUTPUT JSON SHAPE
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: system },
+        { role: "system", content: rails },
         { role: "user", content: user },
       ],
     });
@@ -240,11 +165,7 @@ OUTPUT JSON SHAPE
 
     // --- Persist the turn ---
     const narration = checked.data.narration;
-    const summary = [
-      engine.outcomeSummary,
-      `Action: ${input.last.actionText}`,
-      engine.worldDelta.injury ? `Injury: ${engine.worldDelta.injury}` : "No injury",
-    ];
+    const summary = checked.data.summary;
 
     const insertRow = {
       session_id: sessionId,
@@ -260,21 +181,22 @@ OUTPUT JSON SHAPE
       return jsonError(insErr.message, 500);
     }
 
-    // --- Update actions remaining on the session ---
+    // --- Update actions remaining and state on the session ---
     const { error: updErr } = await supabaseAdmin
       .from("sessions")
-      .update({ actions_remaining: engine.actionsRemaining })
+      .update({ actions_remaining: engine.actionsRemaining, state: nextState })
       .eq("id", sessionId);
     if (updErr) {
       console.error("[gm/turn] session update failed:", updErr);
       return jsonError(updErr.message, 500);
     }
 
-    // --- Return GM output + debug to the client ---
-    const out: GmTurnOutput & { debug: EngineOutput["debug"] } = {
+    // --- Return GM output + debug + normalized state to the client ---
+    const out: GmTurnOutput & { debug: EngineOutput["debug"]; state: typeof nextState } = {
       ...checked.data,
       actionsRemaining: engine.actionsRemaining, // ensure consistency with engine
       debug: engine.debug,
+      state: nextState,
     };
 
     return NextResponse.json(out, { status: 200 });

@@ -31,7 +31,7 @@ export type GameState = {
   };
   range?: "long" | "close";
   inventory?: Array<{ id?: string; name: string; emoji?: string; status?: string; qty?: number }>;
-  mission?: { title: string; objective?: string | null; mission_prompt?: string | null };
+  mission?: { title: string; brief?: string | null; objective?: string | null; mission_prompt?: string | null };
   flags?: string[];
 };
 

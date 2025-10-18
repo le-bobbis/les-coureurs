@@ -24,9 +24,6 @@ Factions & Powers (examples)
 - The English Crown — theocratic monarchy; crusading zeal against “impurity.”
 - The Blessed — ascetics who risk their lives to string bells around revenant necks rather than slay them.
 - The Lost Nobles — faded aristocracy funding crater expeditions to find the “Core.”
-- Raiders, scavengers, and revenants are the most common threats. 
+- Revenants, bandits, and competing mercenaries are the most common threats. 
 
-Geography & Seasonality (evocative, not fixed)
-- Regions spoken of by memory: Crater Lands; Heartland; Western Marches; the Frontier near Prussia.
-- Seasonal rhythm of Revenants and La Brume: strongest in summer; thins in winter; roads and risks shift with weather.
 `.trim();
