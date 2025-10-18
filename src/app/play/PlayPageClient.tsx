@@ -94,13 +94,22 @@ type ApiTurnResponse = {
 
 function isApiTurnResponse(u: unknown): u is ApiTurnResponse {
   if (!isObject(u)) return false;
-  const maybeEngine = isObject((u as UnknownRec).engine) ? ((u as UnknownRec).engine as UnknownRec) : undefined;
-  return (
-    typeof (u as UnknownRec).ok === "boolean" ||
-    typeof (u as UnknownRec).narrative === "string" ||
-    (maybeEngine !== undefined &&
-      (typeof (maybeEngine as any).actionsRemaining === "number" || isObject((maybeEngine as any).debug)))
-  );
+
+  const ok = (u as { ok?: unknown }).ok;
+  const narrative = (u as { narrative?: unknown }).narrative;
+  const engineUnknown = (u as { engine?: unknown }).engine;
+
+  if (typeof ok === "boolean") return true;
+  if (typeof narrative === "string") return true;
+
+  if (isObject(engineUnknown)) {
+    const ar = (engineUnknown as { actionsRemaining?: unknown }).actionsRemaining;
+    const dbg = (engineUnknown as { debug?: unknown }).debug;
+    if (Number(ar)) return true;
+    if (dbg === null || isObject(dbg)) return true;
+  }
+
+  return false;
 }
 
 // allow caching on window without any

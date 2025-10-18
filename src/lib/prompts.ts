@@ -1,10 +1,14 @@
 // src/lib/prompts.ts
 import type { EngineOutput } from "@/types";
 
+// --------------------------------------------------
+// Constants
+// --------------------------------------------------
+
 export const GM_WORD_BUDGET = 150;
 
 export const SYSTEM_GM = `
-You are the Game Master for LES COUREURS — alternate 19th-century Europe ravaged by the undead.
+You are the Game Master for LES COUREURS — alternate 19th-century Europe ravaged by undeath.
 Maintain a grounded, lethal tone. Keep prose lean, sensory, and in second-person present tense.
 `.trim();
 
@@ -22,11 +26,6 @@ OPENING
 `.trim();
 
 export const TURN_RAILS = (actionsRemaining: number, wordBudget = GM_WORD_BUDGET) => `
-GOALS
-- Tell a thrilling adventure for the player, always keeping the mission objective front and center.  
-- Create danger, punish mistakes, reward success & creativity. 
-- Escalate tension and danger as players near their goal / run out of turns. 
-
 FORMAT
 - Return strictly JSON: { "narration": string, "summary": string[], "actionsRemaining": number }.
 - Narration ≤ ${wordBudget} words, present tense, concrete and restrained.
@@ -34,11 +33,14 @@ FORMAT
 - actionsRemaining: return exactly ${actionsRemaining}.
 
 PRINCIPLES
-- Execute only what the player attempted; never decide for them or go beyond their prompt.
+- Execute only what the player attempted; never decide for them.
 - Keep tension high, grounded, and consequence-forward. No choice menus or OOC chatter.
 - Reflect the deterministic engine outcome and pressures from the mission state.
-- If the player should win, let them win. If they should die, let them die. 
 `.trim();
+
+// --------------------------------------------------
+// Types
+// --------------------------------------------------
 
 type BaseMissionArgs = {
   title: string;
@@ -75,19 +77,27 @@ type TurnPromptArgs = {
   sessionFlags?: string[];
 };
 
+// --------------------------------------------------
+// Prompt Builders
+// --------------------------------------------------
+
 export function buildStartPrompt(args: StartPromptArgs): string {
   const { worldCapsule, mission, session, player } = args;
   const pressuresLine = session.pressures?.length ? session.pressures.join(", ") : "—";
-  const flagsLine = session.flags ? Object.keys(session.flags).filter((f) => session.flags?.[f]).join(", ") : "—";
+  const flagsLine = session.flags
+    ? Object.keys(session.flags)
+        .filter((f) => session.flags?.[f])
+        .join(", ")
+    : "—";
   const clocksBlock = session.clocks?.length
-    ? session.clocks.map((clock) => `${clock.label} (${clock.ticks}/${clock.max})`).join("\n")
+    ? session.clocks.map((c) => `${c.label} (${c.ticks}/${c.max})`).join("\n")
     : "—";
   const inventoryBlock = player.inventory.length
-    ? player.inventory.map((item) => `- ${item.name} ×${item.qty}`).join("\n")
+    ? player.inventory.map((i) => `- ${i.name} ×${i.qty}`).join("\n")
     : "- empty";
   const statsBlock = player.stats
     ? Object.entries(player.stats)
-        .map(([key, val]) => `${key}: ${val}`)
+        .map(([k, v]) => `${k}: ${v}`)
         .join(", ")
     : "—";
   const conditionsBlock = player.conditions?.length ? player.conditions.join(", ") : "—";
@@ -124,6 +134,10 @@ export function buildStartPrompt(args: StartPromptArgs): string {
     .join("\n");
 }
 
+// --------------------------------------------------
+// Turn Prompt Builder
+// --------------------------------------------------
+
 export function buildUserPrompt(args: TurnPromptArgs): string {
   const {
     worldCapsule,
@@ -147,29 +161,40 @@ export function buildUserPrompt(args: TurnPromptArgs): string {
     ? `Recent summary (newest first):\n- ${historySummary.join("\n- ")}`
     : "Recent summary: (none)";
 
+  // safely extract worldDelta fields
   const deltaLines: string[] = [];
-  // The EngineOutput type may vary; use optional chaining defensively.
-  const wd: any = (engine as any).worldDelta ?? {};
-  if (wd.injury) deltaLines.push(`Injury applied: ${wd.injury}`);
-  if (Array.isArray(wd.flags) && wd.flags.length) deltaLines.push(`Flags triggered: ${wd.flags.join(", ")}`);
-  if (Array.isArray(wd.itemNotes) && wd.itemNotes.length) deltaLines.push(`Item usage: ${wd.itemNotes.join("; ")}`);
-  if (Array.isArray(wd.inventoryChanges) && wd.inventoryChanges.length) {
+  const wd = (engine.worldDelta ?? {}) as EngineOutput["worldDelta"];
+
+  if (wd?.injury) deltaLines.push(`Injury applied: ${wd.injury}`);
+  if (Array.isArray(wd?.flags) && wd.flags.length)
+    deltaLines.push(`Flags triggered: ${wd.flags.join(", ")}`);
+  if (Array.isArray(wd?.itemNotes) && wd.itemNotes.length)
+    deltaLines.push(`Item usage: ${wd.itemNotes.join("; ")}`);
+
+  if (Array.isArray(wd?.inventoryChanges) && wd.inventoryChanges.length) {
     const invChanges = wd.inventoryChanges
-      .map((change: any) => {
-        const qty = typeof change?.delta === "number" && change.delta > 0 ? `+${change.delta}` : `${change?.delta ?? 0}`;
-        const label = change?.name ?? change?.id ?? "item";
+      .map((change) => {
+        const deltaVal = typeof change?.delta === "number" ? change.delta : 0;
+        const qty = deltaVal > 0 ? `+${deltaVal}` : `${deltaVal}`;
+        const label =
+          typeof change.name === "string"
+            ? change.name
+            : typeof change.id === "string"
+            ? change.id
+            : "item";
         return `${label} (${qty})`;
       })
       .join(", ");
     deltaLines.push(`Inventory shifts: ${invChanges}`);
   }
-  if (Array.isArray(sessionFlags) && sessionFlags.length) {
-    deltaLines.push(`Active flags: ${sessionFlags.join(", ")}`);
-  }
+
+  if (sessionFlags?.length) deltaLines.push(`Active flags: ${sessionFlags.join(", ")}`);
 
   const outcomeLines = [
     `Engine outcome: ${engine.outcomeSummary}`,
-    Array.isArray(engine.checksBrief) && engine.checksBrief[0] ? `Check: ${engine.checksBrief[0]}` : null,
+    Array.isArray(engine.checksBrief) && engine.checksBrief[0]
+      ? `Check: ${engine.checksBrief[0]}`
+      : null,
     `Actions remaining before turn: ${preTurnActionsRemaining}`,
     `Actions remaining after turn: ${engine.actionsRemaining}`,
   ]
